@@ -71,6 +71,10 @@ pub struct Tempo {
 pub struct Beats {
     /// Engine that produced the beat track (provenance).
     pub engine: String,
+    /// Mean of the per-beat `score`s. Present only for engines that emit
+    /// scores. Uncalibrated — a relative trust signal, not a probability.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_score: Option<f32>,
     /// Beat events in ascending time order. Empty when no reliable periodic
     /// structure was found — beats are never extrapolated into silence.
     pub items: Vec<Beat>,
@@ -93,12 +97,20 @@ pub struct Beat {
     /// JAMS/Harmonix convention). Absent under the same conditions as `bar`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bar_position: Option<u32>,
+    /// Engine score for this beat (sigmoid of the model logit at the picked
+    /// frame; neural engine only). UNCALIBRATED: higher = the model asserted
+    /// the beat more strongly, NOT a probability of correctness.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Downbeats {
     /// Engine that produced the downbeat track (provenance).
     pub engine: String,
+    /// Mean of the per-downbeat scores, when available (uncalibrated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_score: Option<f32>,
     pub items: Vec<Downbeat>,
 }
 
@@ -109,6 +121,9 @@ pub struct Downbeat {
     pub time: f64,
     /// 1-based bar number starting at the first detected downbeat.
     pub bar: u32,
+    /// Engine score (same semantics as `Beat.score`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -144,7 +159,7 @@ pub fn build_bars(beats: &[f64], downbeats: &[f64]) -> (Vec<Beat>, Vec<Downbeat>
     let downbeat_items: Vec<Downbeat> = downbeats
         .iter()
         .enumerate()
-        .map(|(i, &t)| Downbeat { time: t, bar: i as u32 + 1 })
+        .map(|(i, &t)| Downbeat { time: t, bar: i as u32 + 1, score: None })
         .collect();
 
     let mut items = Vec::with_capacity(beats.len());
@@ -161,7 +176,13 @@ pub fn build_bars(beats: &[f64], downbeats: &[f64]) -> (Vec<Beat>, Vec<Downbeat>
         } else {
             (None, None)
         };
-        items.push(Beat { time, index: index as u32, bar: bar_field, bar_position: pos_field });
+        items.push(Beat {
+            time,
+            index: index as u32,
+            bar: bar_field,
+            bar_position: pos_field,
+            score: None,
+        });
     }
     (items, downbeat_items)
 }

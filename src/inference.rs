@@ -49,8 +49,14 @@ pub struct NeuralOutput {
     pub downbeat_logits: Vec<f32>,
     /// Beat times in seconds (postprocessed).
     pub beats: Vec<f64>,
+    /// Per-beat score: sigmoid of the beat logit at the picked frame.
+    /// Semantics, precisely: how strongly the model asserted "beat" at that
+    /// frame. UNCALIBRATED — not a probability of being right.
+    pub beat_scores: Vec<f32>,
     /// Downbeat times in seconds (postprocessed, snapped to beats).
     pub downbeats: Vec<f64>,
+    /// Per-downbeat score (sigmoid of the downbeat logit pre-snap).
+    pub downbeat_scores: Vec<f32>,
 }
 
 impl NeuralEngine {
@@ -74,8 +80,17 @@ impl NeuralEngine {
     /// Full pipeline: mono 22050 Hz samples → logits → beat/downbeat times.
     pub fn predict(&self, samples: &[f32]) -> Result<NeuralOutput, BeatlocError> {
         let (beat_logits, downbeat_logits) = self.logits(samples)?;
-        let (beats, downbeats) = postprocess(&beat_logits, &downbeat_logits);
-        Ok(NeuralOutput { beat_logits, downbeat_logits, beats, downbeats })
+        let (beats, beat_scores) = postprocess(&beat_logits);
+        let (mut downbeats, mut downbeat_scores) = postprocess(&downbeat_logits);
+        snap_downbeats(&mut downbeats, &mut downbeat_scores, &beats);
+        Ok(NeuralOutput {
+            beat_logits,
+            downbeat_logits,
+            beats,
+            beat_scores,
+            downbeats,
+            downbeat_scores,
+        })
     }
 
     /// Samples → aggregated frame-level logits (before postprocessing).
@@ -192,58 +207,90 @@ pub fn split_starts(frames: usize) -> Vec<i64> {
     starts
 }
 
-/// The reference "minimal" postprocessor, ported exactly:
-/// local max within ±3 frames AND logit > 0, adjacent peaks merged by their
-/// fractional mean, times = frame / fps, downbeats snapped to nearest beat.
-pub fn postprocess(beat_logits: &[f32], downbeat_logits: &[f32]) -> (Vec<f64>, Vec<f64>) {
-    let beats = peaks_to_times(pick_peaks(beat_logits));
-    let mut downbeats = peaks_to_times(pick_peaks(downbeat_logits));
-    if !beats.is_empty() {
-        for d in downbeats.iter_mut() {
-            *d = beats
-                .iter()
-                .min_by(|a, b| (**a - *d).abs().total_cmp(&(**b - *d).abs()))
-                .copied()
-                .unwrap_or(*d);
-        }
-        downbeats.sort_by(f64::total_cmp);
-        downbeats.dedup();
-    }
-    (beats, downbeats)
+/// The reference "minimal" postprocessor for one activation curve, ported
+/// exactly: local max within ±3 frames AND logit > 0, adjacent peaks merged
+/// by their fractional mean, times = frame / fps.
+///
+/// Returns (times, scores); a peak's score is sigmoid(its logit), the max
+/// over a merged group. Scores are UNCALIBRATED model assertions, not
+/// probabilities of correctness.
+pub fn postprocess(logits: &[f32]) -> (Vec<f64>, Vec<f32>) {
+    let peaks = pick_peaks(logits);
+    let times = peaks.iter().map(|p| p.frame / MODEL_FPS).collect();
+    let scores = peaks.iter().map(|p| sigmoid(p.logit)).collect();
+    (times, scores)
 }
 
-fn peaks_to_times(peaks: Vec<f64>) -> Vec<f64> {
-    peaks.iter().map(|f| f / MODEL_FPS).collect()
+/// Snap downbeat times to the nearest beat (reference behavior); when several
+/// downbeats collapse onto the same beat, keep the highest score.
+pub fn snap_downbeats(
+    downbeats: &mut Vec<f64>,
+    downbeat_scores: &mut Vec<f32>,
+    beats: &[f64],
+) {
+    if beats.is_empty() {
+        return;
+    }
+    for d in downbeats.iter_mut() {
+        *d = beats
+            .iter()
+            .min_by(|a, b| (**a - *d).abs().total_cmp(&(**b - *d).abs()))
+            .copied()
+            .unwrap_or(*d);
+    }
+    let mut pairs: Vec<(f64, f32)> =
+        downbeats.iter().copied().zip(downbeat_scores.iter().copied()).collect();
+    pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pairs.dedup_by(|next, prev| {
+        if next.0 == prev.0 {
+            prev.1 = prev.1.max(next.1);
+            true
+        } else {
+            false
+        }
+    });
+    downbeats.clear();
+    downbeat_scores.clear();
+    downbeats.extend(pairs.iter().map(|p| p.0));
+    downbeat_scores.extend(pairs.iter().map(|p| p.1));
+}
+
+fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
+
+struct Peak {
+    frame: f64,
+    logit: f32,
 }
 
 /// Peak picking: frame is a peak iff it equals the max over ±3 frames and its
-/// logit is > 0 (p > 0.5). Adjacent peaks (gap ≤ 1) merge to their mean,
-/// kept fractional (reference `deduplicate_peaks` semantics).
-fn pick_peaks(logits: &[f32]) -> Vec<f64> {
+/// logit is > 0 (p > 0.5). Adjacent peaks (gap ≤ 1) merge to their fractional
+/// mean (reference `deduplicate_peaks` semantics); score = max group logit.
+fn pick_peaks(logits: &[f32]) -> Vec<Peak> {
     let n = logits.len();
-    let mut peaks: Vec<f64> = Vec::new();
+    let mut raw: Vec<Peak> = Vec::new();
     for i in 0..n {
         let lo = i.saturating_sub(3);
         let hi = (i + 3).min(n - 1);
         let window_max = logits[lo..=hi].iter().copied().fold(f32::NEG_INFINITY, f32::max);
         if logits[i] > 0.0 && logits[i] == window_max {
-            peaks.push(i as f64);
+            raw.push(Peak { frame: i as f64, logit: logits[i] });
         }
     }
-    // Merge groups of adjacent peaks into their running mean.
-    let mut merged: Vec<f64> = Vec::new();
-    let mut cur = match peaks.first() {
-        Some(&p) => p,
-        None => return merged,
-    };
+    // Merge groups of adjacent peaks: running mean of frames, max logit.
+    let mut merged: Vec<Peak> = Vec::new();
+    let Some(first) = raw.first() else { return merged };
+    let mut cur = Peak { frame: first.frame, logit: first.logit };
     let mut count = 1.0;
-    for &p in &peaks[1..] {
-        if p - cur <= 1.0 {
+    for p in &raw[1..] {
+        if p.frame - cur.frame <= 1.0 {
             count += 1.0;
-            cur += (p - cur) / count;
+            cur.frame += (p.frame - cur.frame) / count;
+            cur.logit = cur.logit.max(p.logit);
         } else {
             merged.push(cur);
-            cur = p;
+            cur = Peak { frame: p.frame, logit: p.logit };
             count = 1.0;
         }
     }
@@ -292,12 +339,13 @@ mod tests {
     fn peaks_require_local_max_and_positive_logit() {
         let mut logits = vec![-1.0f32; 21];
         logits[10] = 2.0;
-        let (beats, _) = postprocess(&logits, &logits);
-        assert_eq!(beats, vec![10.0 / 50.0]);
+        let (times, scores) = postprocess(&logits);
+        assert_eq!(times, vec![10.0 / 50.0]);
+        assert!((scores[0] - sigmoid(2.0)).abs() < 1e-6);
         // Sub-threshold peak (logit <= 0) is rejected.
         let mut quiet = vec![-1.0f32; 21];
         quiet[10] = -0.2;
-        assert!(postprocess(&quiet, &quiet).0.is_empty());
+        assert!(postprocess(&quiet).0.is_empty());
     }
 
     #[test]
@@ -305,20 +353,25 @@ mod tests {
         let mut logits = vec![-1.0f32; 21];
         logits[10] = 1.0;
         logits[11] = 1.0; // plateau
-        let (beats, _) = postprocess(&logits, &logits);
-        assert_eq!(beats, vec![10.5 / 50.0]);
+        let (times, _) = postprocess(&logits);
+        assert_eq!(times, vec![10.5 / 50.0]);
     }
 
     #[test]
     fn downbeats_snap_to_nearest_beat_and_dedupe() {
-        let mut beats = vec![-1.0f32; 51];
-        beats[10] = 2.0;
-        beats[20] = 2.0;
-        let mut downs = vec![-1.0f32; 51];
-        downs[11] = 1.0; // snaps to frame 10 -> 0.2 s
-        downs[19] = 1.0; // snaps to frame 20 -> 0.4 s
-        let (b, d) = postprocess(&beats, &downs);
-        assert_eq!(b, vec![0.2, 0.4]);
-        assert_eq!(d, vec![0.2, 0.4]);
+        let mut beat_logits = vec![-1.0f32; 51];
+        beat_logits[10] = 2.0;
+        beat_logits[20] = 2.0;
+        let mut down_logits = vec![-1.0f32; 51];
+        down_logits[11] = 1.0; // snaps to frame 10 -> 0.2 s
+        down_logits[19] = 0.7; // snaps to frame 20 -> 0.4 s
+        down_logits[20] = 1.2; // also snaps to 0.4 s; higher score wins
+        let (beats, _) = postprocess(&beat_logits);
+        let (mut downbeats, mut downbeat_scores) = postprocess(&down_logits);
+        snap_downbeats(&mut downbeats, &mut downbeat_scores, &beats);
+        assert_eq!(beats, vec![0.2, 0.4]);
+        assert_eq!(downbeats, vec![0.2, 0.4]);
+        assert_eq!(downbeat_scores.len(), 2);
+        assert!((downbeat_scores[1] - sigmoid(1.2)).abs() < 1e-6);
     }
 }

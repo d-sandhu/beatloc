@@ -37,6 +37,7 @@ beatloc track.mp3 --curves --json              # include dense per-frame curves
 beatloc track.mp3 --engine dsp --json          # classical baseline (no downbeats)
 beatloc track.mp3 --engine neural --json       # neural engine (beats + downbeats)
 beatloc track.mp3 --model models/beat_this_final0.onnx --json   # full-accuracy model
+beatloc ./music/ --output-dir timelines/ -r    # batch: one JSON per file, recursive
 ```
 
 Input: WAV, MP3, FLAC (pure-Rust decoding via
@@ -78,6 +79,10 @@ Contract for machine consumers:
   downbeats are unknown (e.g. the DSP engine) or before the first downbeat
   (anacrusis).
 - `downbeats` is absent for engines without downbeat support.
+- `score` fields (neural engine only) are the sigmoid of the model's logit
+  at each picked peak: how strongly the model asserted the event. They are
+  **uncalibrated** — a relative trust signal within/across tracks, NOT a
+  probability of correctness. `mean_score` summarizes per track.
 - `sections` come from a feature-contrast novelty detector
   (`dsp-novelty-v1`): they mark THAT something changed, not WHAT it is
   (no intro/verse/chorus labels). `transition_strength` ranks boundaries
@@ -120,6 +125,25 @@ Measured on the Ballroom dataset (698 tracks, mir_eval conventions, first
 
 small0 is the default: within ~0.4 F1 points of the full model at ⅛ the
 size. Pass `--model models/beat_this_final0.onnx` for maximum accuracy.
+
+### What music does it work on?
+
+Per-genre results with the default engine (Ballroom corpus, beat F1 /
+downbeat F1) — steady-tempo dance music across both 4/4 and 3/4 meters:
+
+| Genre | Beat F1 | Downbeat F1 | | Genre | Beat F1 | Downbeat F1 |
+|---|---|---|---|---|---|---|
+| Jive | 0.995 | 0.993 | | Samba | 0.984 | 0.975 |
+| Rumba (Am.) | 0.996 | 0.994 | | Rumba (Misc) | 0.975 | 0.976 |
+| Tango | 0.992 | 0.986 | | **Waltz (3/4)** | **0.959** | **0.964** |
+| Quickstep | 0.991 | 0.988 | | Viennese Waltz (3/4) | 0.991 | 0.989 |
+| ChaChaCha | 0.988 | 0.988 | | | | |
+
+Note the 3/4 meters work fine — no 4/4 assumption is baked in. Expected
+weaker spots (not yet measured by us; per the model's literature): rubato
+and free-tempo classical, very quiet/sparse textures, extreme tempo changes,
+and meters beyond 3/4–4/4. The `score` fields exist so agents can see when
+the model is uncertain.
 
 Honest limitations: the neural engine inherits Beat This!'s training-data
 biases (Western 4/4-heavy); it can still lock offbeat on unusual textures,

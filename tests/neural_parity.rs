@@ -105,6 +105,27 @@ fn auto_engine_uses_neural_when_models_present_and_dsp_otherwise() {
     }
     assert_eq!(dsp.beats.engine, "dsp-ellis2007");
     assert!(dsp.downbeats.is_none());
+    // The DSP engine emits no scores; unknown/unsupported is absent, not null.
+    assert!(dsp.beats.mean_score.is_none());
+    assert!(dsp.beats.items.iter().all(|b| b.score.is_none()));
+}
+
+#[test]
+fn neural_scores_are_present_and_bounded() {
+    if !Path::new(beatloc::DEFAULT_BEAT_MODEL).is_file() {
+        eprintln!("skipping: {MODELS_PRESENT}");
+        return;
+    }
+    let t = beatloc::analyze_file(
+        Path::new("tests/fixtures/drum_loop_120bpm.wav"),
+        beatloc::AnalysisOptions { engine: beatloc::Engine::Neural, ..Default::default() },
+    )
+    .unwrap();
+    assert!(t.beats.mean_score.is_some());
+    assert!(t.beats.items.iter().all(|b| matches!(b.score, Some(s) if s > 0.5 && s <= 1.0)));
+    let downbeats = t.downbeats.unwrap();
+    assert!(downbeats.mean_score.is_some());
+    assert!(downbeats.items.iter().all(|d| matches!(d.score, Some(s) if s > 0.5 && s <= 1.0)));
 }
 
 #[test]

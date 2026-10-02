@@ -71,6 +71,8 @@ fn main() {
     // name, beat F1, CMLt, AMLt, mean offset, downbeat F1 (if available)
     let mut per_track: Vec<(String, f64, f64, f64, f64, Option<f64>)> = Vec::new();
     let mut all_offsets: Vec<f64> = Vec::new();
+    // genre (audio parent dir) → (beat F1s, downbeat F1s)
+    let mut per_genre: BTreeMap<String, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
 
     for audio in audio_files.into_iter().take(limit) {
         let stem = audio.file_stem().unwrap().to_string_lossy().to_string();
@@ -124,6 +126,17 @@ fn main() {
             _ => None,
         };
 
+        let genre = audio
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let entry = per_genre.entry(genre).or_default();
+        entry.0.push(fm.f);
+        if let Some(d) = downbeat_f1 {
+            entry.1.push(d);
+        }
+
         per_track.push((stem, fm.f, cont.cmlt, cont.amlt, mean_off, downbeat_f1));
         scored += 1;
     }
@@ -174,6 +187,25 @@ fn main() {
             "  {name:<44} F1 {f1:.3}  CMLt {cmlt:.3}  AMLt {amlt:.3}  off {:+.1} ms",
             off * 1000.0
         );
+    }
+
+    if per_genre.len() > 1 {
+        println!("\nper genre (directory name):");
+        let mut genres: Vec<_> = per_genre.iter().collect();
+        genres.sort_by(|a, b| {
+            let fa = a.1.0.iter().sum::<f64>() / a.1.0.len() as f64;
+            let fb = b.1.0.iter().sum::<f64>() / b.1.0.len() as f64;
+            fa.total_cmp(&fb)
+        });
+        for (genre, (f1s, downs)) in genres {
+            let f1 = f1s.iter().sum::<f64>() / f1s.len() as f64;
+            let down = if downs.is_empty() {
+                String::from("     —")
+            } else {
+                format!("{:.3}", downs.iter().sum::<f64>() / downs.len() as f64)
+            };
+            println!("  {genre:<20} beat F1 {f1:.3}   downbeat F1 {down}   ({} tracks)", f1s.len());
+        }
     }
 }
 

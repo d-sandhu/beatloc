@@ -55,3 +55,41 @@ fn missing_input_is_a_clean_error() {
     assert!(out.stdout.is_empty());
     assert!(!out.stderr.is_empty());
 }
+
+#[test]
+fn batch_mode_writes_one_json_per_file_and_requires_output_dir() {
+    let dir = std::env::temp_dir().join(format!("beatloc-batch-{}", std::process::id()));
+    let out_dir = dir.join("out");
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.wav", "b.wav"] {
+        common::write_wav_i16(
+            &dir.join(name),
+            22_050,
+            1,
+            &common::click_track(22_050, &[0.5, 1.0], 1.5),
+        );
+    }
+
+    // Directory input without --output-dir is a usage-shaped error (exit 1).
+    let no_dir = beatloc().arg(&dir).output().unwrap();
+    assert_eq!(no_dir.status.code(), Some(1));
+
+    let out = beatloc()
+        .arg(&dir)
+        .arg("--output-dir")
+        .arg(&out_dir)
+        .arg("--engine")
+        .arg("dsp")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    for name in ["a.json", "b.json"] {
+        let json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out_dir.join(name)).expect("per-file JSON written"),
+        )
+        .unwrap();
+        assert_eq!(json["format"]["name"], "beatloc-timeline");
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -21,8 +21,17 @@ use beatloc::{AnalysisOptions, Engine};
     about = "Convert audio into a machine-readable musical timeline (JSON)"
 )]
 struct Cli {
-    /// Audio input file (WAV, MP3, FLAC)
+    /// Audio input file (WAV, MP3, FLAC) or a directory for batch mode
     input: PathBuf,
+
+    /// Recurse into subdirectories (batch mode only)
+    #[arg(short, long)]
+    recursive: bool,
+
+    /// Batch mode: directory to write one <name>.json per input file.
+    /// Required when INPUT is a directory.
+    #[arg(long, conflicts_with_all = ["output", "json"])]
+    output_dir: Option<PathBuf>,
 
     /// Write JSON to stdout (default when --output is not given)
     #[arg(long, conflicts_with = "output")]
@@ -76,6 +85,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
+    if cli.input.is_dir() {
+        return run_batch(&cli);
+    }
+
     let engine = match cli.engine {
         EngineArg::Auto => Engine::Auto,
         EngineArg::Dsp => Engine::Dsp,
@@ -108,6 +121,56 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             eprintln!("wrote {}", path.display());
         }
         None => println!("{json}"),
+    }
+    Ok(())
+}
+
+/// Batch mode: one JSON file per audio file under the input directory.
+/// Progress and per-file errors go to stderr; exit 1 if any file failed.
+fn run_batch(cli: &Cli) -> anyhow::Result<()> {
+    let Some(out_dir) = &cli.output_dir else {
+        anyhow::bail!("batch mode requires --output-dir (one JSON per input file)");
+    };
+    std::fs::create_dir_all(out_dir)?;
+
+    let engine = match cli.engine {
+        EngineArg::Auto => Engine::Auto,
+        EngineArg::Dsp => Engine::Dsp,
+        EngineArg::Neural => Engine::Neural,
+    };
+    let files = beatloc::find_audio_files(&cli.input, cli.recursive);
+    if files.is_empty() {
+        anyhow::bail!("no audio files found under {}", cli.input.display());
+    }
+
+    let total = files.len();
+    let mut failures = 0usize;
+    for (i, file) in files.iter().enumerate() {
+        let out_path = out_dir.join(file.file_stem().unwrap_or_default()).with_extension("json");
+        let result = (|| -> anyhow::Result<()> {
+            let timeline = beatloc::analyze_file(
+                file,
+                AnalysisOptions {
+                    include_curves: cli.curves,
+                    engine,
+                    beat_model: cli.model.clone(),
+                    mel_model: cli.mel_model.clone(),
+                },
+            )?;
+            let json = beatloc::serialize::to_json_string(&timeline, cli.pretty)?;
+            std::fs::write(&out_path, json)
+                .map_err(|e| anyhow::anyhow!("write {}: {e}", out_path.display()))
+        })();
+        match result {
+            Ok(()) => eprintln!("[{}/{}] ok  {}", i + 1, total, file.display()),
+            Err(e) => {
+                failures += 1;
+                eprintln!("[{}/{}] FAILED {}: {e:#}", i + 1, total, file.display());
+            }
+        }
+    }
+    if failures > 0 {
+        anyhow::bail!("{failures}/{total} files failed");
     }
     Ok(())
 }

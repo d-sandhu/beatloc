@@ -52,7 +52,7 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.4.0";
+pub const SCHEMA_VERSION: &str = "0.5.0";
 
 /// Default locations of the ONNX model artifacts (regenerate with
 /// `scripts/export_model.py`; see models/manifest.json for provenance).
@@ -164,12 +164,30 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             let engine = inference::NeuralEngine::load(&mel_model, &beat_model)?;
             let out = engine.predict(&mono)?;
             let name = model_engine_name(&beat_model);
-            let (items, downbeat_items) = timeline::build_bars(&out.beats, &out.downbeats);
+            let (mut items, mut downbeat_items) =
+                timeline::build_bars(&out.beats, &out.downbeats);
+            for (item, &score) in items.iter_mut().zip(&out.beat_scores) {
+                item.score = Some(score);
+            }
+            for (item, &score) in downbeat_items.iter_mut().zip(&out.downbeat_scores) {
+                item.score = Some(score);
+            }
+            let mean_score = |s: &[f32]| {
+                if s.is_empty() { None } else { Some(s.iter().sum::<f32>() / s.len() as f32) }
+            };
             let tempo = neural_tempo(&out.beats, &name);
             (
                 tempo,
-                timeline::Beats { engine: name.clone(), items },
-                Some(timeline::Downbeats { engine: name, items: downbeat_items }),
+                timeline::Beats {
+                    engine: name.clone(),
+                    mean_score: mean_score(&out.beat_scores),
+                    items,
+                },
+                Some(timeline::Downbeats {
+                    engine: name,
+                    mean_score: mean_score(&out.downbeat_scores),
+                    items: downbeat_items,
+                }),
             )
         }
         _ => {
@@ -183,6 +201,7 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
                     }),
                     timeline::Beats {
                         engine: dsp::beat::ENGINE.to_string(),
+                        mean_score: None, // the DSP engine emits no scores
                         items: track
                             .frames
                             .iter()
@@ -197,13 +216,14 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
                                 index: index as u32,
                                 bar: None,
                                 bar_position: None,
+                                score: None,
                             })
                             .collect(),
                     },
                 ),
                 None => (
                     None,
-                    timeline::Beats { engine: dsp::beat::ENGINE.to_string(), items: Vec::new() },
+                    timeline::Beats { engine: dsp::beat::ENGINE.to_string(), mean_score: None, items: Vec::new() },
                 ),
             };
             (tempo, beats, None)
@@ -248,6 +268,31 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
         onsets,
         curves,
     })
+}
+
+/// Collect supported audio files under `dir` (recursive iff `recursive`),
+/// sorted by path for deterministic batch processing.
+pub fn find_audio_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if recursive {
+                    stack.push(path);
+                }
+            } else if matches!(
+                path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                Some("wav" | "mp3" | "flac")
+            ) {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Engine provenance string from a model file name, e.g.
