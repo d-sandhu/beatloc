@@ -2,6 +2,7 @@
 //! at the crate-wide analysis rate and shares one frame grid, so all outputs
 //! are directly comparable.
 
+pub mod beat;
 pub mod energy;
 pub mod onset;
 pub mod resample;

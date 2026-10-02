@@ -20,7 +20,7 @@ fn stdout_is_pure_json_and_stderr_is_silent() {
     assert!(out.stderr.is_empty(), "stderr not empty: {}", String::from_utf8_lossy(&out.stderr));
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is not JSON");
     assert_eq!(json["format"]["name"], "beatloc-timeline");
-    assert_eq!(json["format"]["version"], "0.1.0");
+    assert_eq!(json["format"]["version"], beatloc::SCHEMA_VERSION);
     assert_eq!(json["generator"]["name"], "beatloc");
 
     std::fs::remove_file(&wav).ok();

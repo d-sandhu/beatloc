@@ -1,8 +1,10 @@
 //! beatloc — convert audio into a machine-readable musical timeline (JSON).
 //!
-//! V0.1 scope ("signal landmarks"): decode WAV/MP3/FLAC, report duration and
-//! source metadata, emit onset timestamps and (optionally) dense energy and
-//! onset-strength curves as versioned JSON on a single, documented time base.
+//! Current scope (V0.2): decode WAV/MP3/FLAC, report duration and source
+//! metadata, emit onset timestamps, beat timestamps, and a global tempo
+//! estimate from the classical DSP baseline (Ellis 2007), plus optional dense
+//! energy/onset-strength curves — all as versioned JSON on one documented
+//! time base. Downbeats and bar positions arrive with the neural engine.
 //!
 //! # Numerical assumptions (V0.1)
 //!
@@ -29,6 +31,7 @@ use std::path::Path;
 
 pub mod decode;
 pub mod dsp;
+pub mod eval;
 pub mod serialize;
 pub mod timeline;
 
@@ -46,7 +49,7 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.1.0";
+pub const SCHEMA_VERSION: &str = "0.2.0";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BeatlocError {
@@ -75,6 +78,36 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
 
     let flux = dsp::onset::onset_strength(&mono, STFT_WINDOW, STFT_HOP);
     let onsets = dsp::onset::pick_onsets(&flux, ANALYSIS_SAMPLE_RATE, STFT_WINDOW, STFT_HOP);
+
+    // V0.2: classical beat baseline on the same envelope (Ellis 2007).
+    let fps = ANALYSIS_SAMPLE_RATE as f64 / STFT_HOP as f64;
+    let (tempo, beats) = match dsp::beat::track_beats(&flux, fps) {
+        Some(track) => (
+            Some(timeline::Tempo {
+                engine: dsp::beat::ENGINE,
+                bpm: track.bpm,
+                periodicity: track.periodicity,
+            }),
+            timeline::Beats {
+                engine: dsp::beat::ENGINE,
+                items: track
+                    .frames
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &frame)| timeline::Beat {
+                        time: dsp::frame_center_seconds(
+                            frame,
+                            STFT_WINDOW,
+                            STFT_HOP,
+                            ANALYSIS_SAMPLE_RATE,
+                        ),
+                        index: index as u32,
+                    })
+                    .collect(),
+            },
+        ),
+        None => (None, timeline::Beats { engine: dsp::beat::ENGINE, items: Vec::new() }),
+    };
 
     let curves = options.include_curves.then(|| timeline::Curves {
         energy: timeline::Curve {
@@ -107,6 +140,8 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             window: "hann (periodic)",
             timestamps: "seconds from decoded stream start (gapless-trimmed) to frame centre",
         },
+        tempo,
+        beats,
         onsets,
         curves,
     })

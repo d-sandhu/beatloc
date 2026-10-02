@@ -30,9 +30,43 @@ pub struct Timeline {
     pub generator: GeneratorInfo,
     pub source: SourceInfo,
     pub analysis: AnalysisInfo,
+    /// Global tempo. Absent when no periodicity could be established —
+    /// "unknown" is represented by absence, never by a sentinel value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tempo: Option<Tempo>,
+    pub beats: Beats,
     pub onsets: Vec<Onset>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub curves: Option<Curves>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Tempo {
+    /// Engine that produced the estimate (provenance).
+    pub engine: &'static str,
+    /// Global tempo in beats per minute.
+    pub bpm: f64,
+    /// Normalized autocorrelation at the chosen period, in (0, 1].
+    /// Uncalibrated diagnostic of periodicity strength — NOT a probability.
+    pub periodicity: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Beats {
+    /// Engine that produced the beat track (provenance).
+    pub engine: &'static str,
+    /// Beat events in ascending time order. Empty when no reliable periodic
+    /// structure was found — beats are never extrapolated into silence.
+    pub items: Vec<Beat>,
+}
+
+/// One beat. `index` is the 0-based position in the detected beat sequence
+/// (a counter, NOT a bar position — meter is unknown until downbeats land).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Beat {
+    /// Seconds from decoded stream start (frame-centre convention).
+    pub time: f64,
+    pub index: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
