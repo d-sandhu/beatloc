@@ -112,10 +112,14 @@ Conventions:
 Measured on the Ballroom dataset (698 tracks, mir_eval conventions, first
 5 s trimmed):
 
-| Engine | Beat F1 | CMLt | AMLt | Downbeat F1 | Mean signed offset |
-|---|---|---|---|---|---|
-| `beat-this-small0` (default, neural) | **0.984** | 0.979 | 0.980 | **0.982** | +3.2 ms |
-| `dsp-ellis2007` (baseline) | 0.771 | 0.575 | 0.850 | — (unsupported) | +7.1 ms |
+| Engine | Beat F1 | CMLt | AMLt | Downbeat F1 | Mean offset | Speed | Model size |
+|---|---|---|---|---|---|---|---|
+| `beat-this-final0` | **0.988** | **0.985** | 0.985 | **0.986** | −0.7 ms | 47× RT | 83 MB |
+| `beat-this-small0` (default) | 0.984 | 0.979 | 0.980 | 0.982 | +3.2 ms | 83× RT | 10 MB |
+| `dsp-ellis2007` (baseline) | 0.771 | 0.575 | 0.850 | — | +7.1 ms | 3650× RT | none |
+
+small0 is the default: within ~0.4 F1 points of the full model at ⅛ the
+size. Pass `--model models/beat_this_final0.onnx` for maximum accuracy.
 
 Honest limitations: the neural engine inherits Beat This!'s training-data
 biases (Western 4/4-heavy); it can still lock offbeat on unusual textures,
