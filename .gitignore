@@ -3,4 +3,10 @@
 # Private working notes (architecture memo, research) — never commit.
 /notes/
 
+# Evaluation datasets (downloaded separately; licenses prohibit redistribution)
+/datasets/
+
+# Dev-only Python environment (mir_eval differential testing)
+/.venv/
+
 .DS_Store

@@ -9,9 +9,12 @@
 //!    tempo prior centered at 120 BPM (width 1 octave). Sub-frame refinement
 //!    by parabolic interpolation of the ACF peak.
 //! 2. DP over frames: `score[i] = e[i] + max_δ { score[i−δ] − λ·log2(δ/τ)² }`
-//!    with δ ∈ [0.5τ, 1.5τ], envelope max-normalized to [0, 1], and λ = 100 —
-//!    chosen so that at τ ≈ 25 frames, a ±1-frame deviation costs ≈ 0.35,
-//!    i.e. strong evidence outweighs timing rigidity but noise does not.
+//!    with δ ∈ [0.5τ, 1.5τ] and λ = 100 — chosen so that at τ ≈ 25 frames, a
+//!    ±1-frame deviation costs ≈ 0.35, i.e. strong evidence outweighs timing
+//!    rigidity but noise does not. The envelope is first *locally*
+//!    normalized (±1 s moving maximum, with a true-silence gate) so quiet
+//!    sections carry evidence on the same scale as loud ones — see
+//!    [`condition_envelope`].
 //! 3. Backtrace from the (first) global maximum. Beats cover only the region
 //!    with onset evidence — we do NOT extrapolate a beat grid into silence.
 //!
@@ -51,7 +54,7 @@ pub struct BeatTrack {
 /// short for even two periods at the slowest detectable tempo).
 pub fn track_beats(flux: &[f32], fps: f64) -> Option<BeatTrack> {
     let (period, periodicity) = estimate_period(flux, fps)?;
-    let frames = dp_track(flux, period);
+    let frames = dp_track(flux, period, fps);
     if frames.is_empty() {
         return None;
     }
@@ -105,14 +108,13 @@ fn estimate_period(flux: &[f32], fps: f64) -> Option<(f64, f32)> {
     Some((period, periodicity as f32))
 }
 
-/// Ellis DP beat picking on the max-normalized envelope.
-fn dp_track(flux: &[f32], period: f64) -> Vec<usize> {
-    let n = flux.len();
-    let max_val = flux.iter().copied().fold(0.0f32, f32::max);
-    if n == 0 || max_val <= 0.0 {
+/// Ellis DP beat picking on the locally-normalized envelope.
+fn dp_track(flux: &[f32], period: f64, fps: f64) -> Vec<usize> {
+    let e = condition_envelope(flux, fps);
+    let n = e.len();
+    if n == 0 || e.iter().all(|&v| v <= 0.0) {
         return Vec::new();
     }
-    let e: Vec<f64> = flux.iter().map(|&v| f64::from(v / max_val)).collect();
 
     let lo = (period * 0.5).round().max(1.0) as usize;
     let hi = (period * 1.5).round().max(lo as f64) as usize;
@@ -153,6 +155,39 @@ fn dp_track(flux: &[f32], period: f64) -> Vec<usize> {
     }
     frames.reverse();
     frames
+}
+
+/// Condition the envelope for the DP: divide by a moving ±1 s maximum so
+/// evidence in quiet sections is on the same scale as in loud ones.
+///
+/// Why: with global max-normalization, a loud intro makes quiet-section
+/// flux ~1e-3 while the DP's interval penalty is O(1e-2..1e1) — so the
+/// optimal beat sequence *ends* rather than cross a quiet passage. (Found
+/// via Ballroom evaluation: Quickstep Media-103313 lost all beats after
+/// 4.7 s.) True silence still yields zero evidence: windows whose local
+/// maximum is below 0.1% of the global maximum are gated to exactly 0, so
+/// beats are still never extrapolated into silence.
+fn condition_envelope(flux: &[f32], fps: f64) -> Vec<f64> {
+    let n = flux.len();
+    let global_max = flux.iter().copied().fold(0.0f32, f32::max);
+    if n == 0 || global_max <= 0.0 {
+        return vec![0.0; n];
+    }
+    let gate = 1e-3 * f64::from(global_max);
+    let radius = fps as usize; // ±1 s
+    (0..n)
+        .map(|i| {
+            let from = i.saturating_sub(radius);
+            let to = (i + radius).min(n - 1);
+            let local_max = flux[from..=to].iter().copied().fold(0.0f32, f32::max);
+            let v = f64::from(flux[i]);
+            if f64::from(local_max) < gate {
+                0.0
+            } else {
+                v / f64::from(local_max)
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

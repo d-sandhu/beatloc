@@ -70,18 +70,29 @@ Conventions:
   flux in arbitrary, track-relative units.
 - Dense curves are omitted unless `--curves` is passed.
 
-Current limitations (honest ones): the beat engine is a classical
-global-tempo DP tracker (Ellis 2007) — it assumes one tempo per track, can
-halve/double tempo, and has not yet been scored against annotated datasets
-(evaluation harness in progress). Onset detection is a spectral-flux
-heuristic tuned for clear attacks. No downbeats or bar positions yet.
+Current limitations (honest, measured): the beat engine is a classical
+global-tempo DP tracker (Ellis 2007). On the Ballroom dataset (698 tracks,
+mir_eval conventions, first 5 s trimmed): **F-measure 0.77, CMLt 0.57, AMLt
+0.85**, mean signed offset +7 ms. Known failure modes: it can lock onto the
+offbeat (tempo right, phase 180° out) and assumes one tempo per track — the
+planned neural engine exists precisely to close this gap (reference point:
+Beat This! scores ~0.975 F1 on the same corpus). Onset detection is a
+spectral-flux heuristic tuned for clear attacks. No downbeats or bar
+positions yet.
+
+Reproduce the numbers:
+
+```sh
+scripts/fetch_datasets.sh   # downloads Ballroom audio + annotations (research use only)
+cargo run --release --example eval -- datasets/BallroomData datasets/ballroom-annotations
+```
 
 ## Roadmap
 
 | Milestone | Content |
 |---|---|
 | **V0.1** ✅ | decode, metadata, energy, onsets, versioned JSON, alignment tests |
-| **V0.2** 🚧 | beat timestamps + global tempo (DSP baseline) ✅; dataset evaluation 🚧 |
+| **V0.2** ✅ | beats + global tempo (DSP baseline); Rust eval metrics differential-tested vs mir_eval; measured accuracy on Ballroom |
 | V0.3 | downbeats & bar positions via neural inference, parity-tested |
 | V0.4 | release hardening: schema 1.0.0, cross-platform builds, benchmarks |
 | later | section boundaries & labels (chorus entrances, drops), transitions |
