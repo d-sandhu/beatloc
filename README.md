@@ -14,7 +14,8 @@ sections).** Output schema is versioned but unstable until 1.0.0.
 
 ```sh
 cargo build --release        # produces a single self-contained binary
-cargo test                   # unit + integration + CLI contract tests
+cargo test --release         # unit + integration + CLI contract tests
+                             # (release keeps the neural-parity test fast)
 ```
 
 The neural engine needs its ONNX model files (not committed; see
@@ -64,10 +65,11 @@ Contract for machine consumers:
                  "timestamps": "seconds from decoded stream start (gapless-trimmed) to frame centre" },
   "tempo":     { "engine": "beat-this-small0 (median-ibi)", "bpm": 120.0,
                  "local": [ { "time": 1.25, "bpm": 119.8 } ] },
-  "beats":     { "engine": "beat-this-small0",
-                 "items": [ { "time": 1.02, "index": 0, "bar": 1, "bar_position": 1 } ] },
-  "downbeats": { "engine": "beat-this-small0", "items": [ { "time": 1.02, "bar": 1 } ] },
-  "sections":  { "engine": "dsp-novelty-v1",
+  "beats":     { "engine": "beat-this-small0", "mean_score": 0.97,
+                 "items": [ { "time": 1.02, "index": 0, "bar": 1, "bar_position": 1, "score": 0.98 } ] },
+  "downbeats": { "engine": "beat-this-small0", "mean_score": 0.98,
+                 "items": [ { "time": 1.02, "bar": 1, "score": 0.99 } ] },
+  "sections":  { "engine": "dsp-novelty-v2",
                  "items": [ { "index": 0, "start": 0.0, "end": 16.42 },
                             { "index": 1, "start": 16.42, "end": 30.05, "transition_strength": 0.91 } ] },
   "onsets":    [ { "time": 0.983, "strength": 12.34 } ],
@@ -187,7 +189,9 @@ cargo run --release --example eval_sections -- datasets/rwc-audio datasets/rwc-a
 | **V0.1** ✅ | decode, metadata, energy, onsets, versioned JSON, alignment tests |
 | **V0.2** ✅ | beats + global tempo (DSP baseline); Rust eval metrics differential-tested vs mir_eval; measured accuracy on Ballroom |
 | **V0.3** ✅ | neural engine (Beat This! via rten/ONNX): downbeats, bar positions, parity-tested vs the Python reference |
-| **V0.4** 🚧 | sections/transitions v0 ✅; schema 1.0.0, cross-platform verification, benchmarks (release itself deferred by project owner) |
+| **V0.5** ✅ | trust scores (uncalibrated), batch mode, per-genre eval, AAC/OGG/M4A decode, local tempo track, untrimmed-MP3 detection |
+| **sections** ✅ | v2 spectral-novelty detector, benchmarked on RWC-P (see above) |
+| **V0.4** | schema 1.0.0 freeze + release engineering — deferred by project owner |
 | later | section labels (verse/chorus), richer transitions, streaming for very long files |
 
 ## License
