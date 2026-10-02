@@ -199,10 +199,10 @@ pub fn split_starts(frames: usize) -> Vec<i64> {
         s += step;
     }
     // avoid_short_end: shift the last chunk so it ends flush with the piece.
-    if frames as i64 > step {
-        if let Some(last) = starts.last_mut() {
-            *last = frames as i64 - (CHUNK_SIZE as i64 - BORDER);
-        }
+    if frames as i64 > step
+        && let Some(last) = starts.last_mut()
+    {
+        *last = frames as i64 - (CHUNK_SIZE as i64 - BORDER);
     }
     starts
 }

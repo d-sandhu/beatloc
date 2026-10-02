@@ -21,8 +21,6 @@
 //! semantic labels. Strengths are relative within the track (peak novelty
 //! normalized to [0, 1]) — an uncalibrated ranking aid, not a probability.
 
-use super::stft::stft_magnitudes;
-
 /// Number of log-spaced frequency bands.
 const N_BANDS: usize = 32;
 /// Band edge range in Hz.
@@ -62,9 +60,8 @@ pub fn detect_transitions(mags: &[Vec<f32>], hop_seconds: f64, sample_rate: u32)
     // CONTRAST seconds of the file edges the windows would be asymmetric, so
     // no boundaries are reported there (an end-of-file fade is not a musical
     // transition, and a section shorter than 2 s is not useful anyway).
-    for t in w..n.saturating_sub(w) {
-        novelty[t] =
-            cosine_distance(&band_mean(&features, t - w, t), &band_mean(&features, t, t + w));
+    for (t, nv) in novelty.iter_mut().enumerate().take(n.saturating_sub(w)).skip(w) {
+        *nv = cosine_distance(&band_mean(&features, t - w, t), &band_mean(&features, t, t + w));
     }
 
     let s = (SMOOTH_SECONDS / hop_seconds).max(1.0) as usize;
@@ -82,15 +79,15 @@ pub fn detect_transitions(mags: &[Vec<f32>], hop_seconds: f64, sample_rate: u32)
     for t in (w + 1)..(n.saturating_sub(w + 1)) {
         let v = novelty[t];
         if v > threshold && v > novelty[t - 1] && v >= novelty[t + 1] {
-            if let Some(prev) = transitions.last() {
-                if t - prev.frame < min_gap {
-                    // Too close: keep the stronger of the two.
-                    if v > novelty[prev.frame] {
-                        *transitions.last_mut().unwrap() =
-                            Transition { frame: t, strength: (v / max_val) as f32 };
-                    }
-                    continue;
+            if let Some(prev) = transitions.last()
+                && t - prev.frame < min_gap
+            {
+                // Too close: keep the stronger of the two.
+                if v > novelty[prev.frame] {
+                    *transitions.last_mut().unwrap() =
+                        Transition { frame: t, strength: (v / max_val) as f32 };
                 }
+                continue;
             }
             transitions.push(Transition { frame: t, strength: (v / max_val) as f32 });
         }

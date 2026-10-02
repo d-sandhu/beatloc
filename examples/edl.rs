@@ -85,17 +85,16 @@ fn main() {
     });
     if let (Some(strongest), Some(downbeats)) =
         (strongest, timeline["downbeats"]["items"].as_array())
+        && let Some(d) = downbeats.iter().find(|d| d["time"].as_f64().unwrap() >= strongest)
     {
-        if let Some(d) = downbeats.iter().find(|d| d["time"].as_f64().unwrap() >= strongest) {
-            events.push(serde_json::json!({
-                "time": d["time"].as_f64().unwrap(),
-                "type": "reveal",
-                "detail": format!(
-                    "first downbeat (bar {}) at/after strongest transition at {strongest:.2} s",
-                    d["bar"].as_u64().unwrap()
-                ),
-            }));
-        }
+        events.push(serde_json::json!({
+            "time": d["time"].as_f64().unwrap(),
+            "type": "reveal",
+            "detail": format!(
+                "first downbeat (bar {}) at/after strongest transition at {strongest:.2} s",
+                d["bar"].as_u64().unwrap()
+            ),
+        }));
     }
 
     events.sort_by(|a, b| {

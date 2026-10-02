@@ -24,6 +24,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// One scored track: (stem, beat F1, CMLt, AMLt, mean signed offset, downbeat F1).
+type TrackRow = (String, f64, f64, f64, f64, Option<f64>);
+
 use beatloc::eval::{continuity, f_measure, matched_offsets};
 use beatloc::{AnalysisOptions, Engine, analyze_file};
 
@@ -46,7 +49,7 @@ fn main() {
                 engine = match args.next().as_deref() {
                     Some("dsp") => Engine::Dsp,
                     Some("neural") => Engine::Neural,
-                    Some("auto") | _ => Engine::Auto,
+                    _ => Engine::Auto,
                 }
             }
             "--model" => model = args.next().map(PathBuf::from),
@@ -69,7 +72,7 @@ fn main() {
     let mut total_wall_seconds = 0.0f64;
     let mut engine_used = String::new();
     // name, beat F1, CMLt, AMLt, mean offset, downbeat F1 (if available)
-    let mut per_track: Vec<(String, f64, f64, f64, f64, Option<f64>)> = Vec::new();
+    let mut per_track: Vec<TrackRow> = Vec::new();
     let mut all_offsets: Vec<f64> = Vec::new();
     // genre (audio parent dir) → (beat F1s, downbeat F1s)
     let mut per_genre: BTreeMap<String, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
@@ -146,7 +149,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mean = |f: fn(&(String, f64, f64, f64, f64, Option<f64>)) -> f64| {
+    let mean = |f: fn(&TrackRow) -> f64| {
         per_track.iter().map(f).sum::<f64>() / scored as f64
     };
     let mean_offset = all_offsets.iter().sum::<f64>() / all_offsets.len().max(1) as f64;

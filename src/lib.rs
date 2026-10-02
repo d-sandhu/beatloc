@@ -257,7 +257,7 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
     let curves = options.include_curves.then(|| timeline::Curves {
         energy: timeline::Curve {
             start_seconds: dsp::frame_center_seconds(0, STFT_WINDOW, STFT_HOP, ANALYSIS_SAMPLE_RATE),
-            hop_seconds: hop_seconds,
+            hop_seconds,
             units: timeline::Units::Dbfs,
             values: energy,
         },
