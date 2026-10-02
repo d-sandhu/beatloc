@@ -12,10 +12,9 @@
 //!
 //! v1 → v2: features went from [energy, flux] scalars to 32 spectral bands,
 //! so texture changes at constant loudness (e.g. bass drops out, hats enter)
-//! are now visible. Validated on synthetic fixtures and the maintainer's own
-//! tracks; an annotated-structure benchmark is blocked on a legally
-//! downloadable corpus (RWC audio is a 13.4 GB monolith; Harmonix ships no
-//! audio).
+//! are now visible. Validated on synthetic fixtures, the maintainer's own
+//! tracks, and the RWC-P structure benchmark (boundary F-measure 0.461
+//! @ ±3 s, precision-weighted by design — see examples/eval_sections.rs).
 //!
 //! This detects THAT something changed, never WHAT a section is — no
 //! semantic labels. Strengths are relative within the track (peak novelty

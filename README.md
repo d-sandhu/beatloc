@@ -160,11 +160,24 @@ and it does not report a time signature — only beat positions within
 detected bars. Onset detection is a spectral-flux heuristic. The DSP engine
 assumes one global tempo and exists as a fallback/baseline, not the product.
 
+### Sections accuracy (RWC-P, 100 tracks, AIST structure annotations)
+
+Boundary detection F-measure: **0.461 @ ±3 s** (the standard structure-eval
+tolerance; precision 0.686 / recall 0.357) and **0.202 @ ±0.5 s**. Context:
+human annotators agree with each other at only ~0.5–0.7 F here — humans
+split sections on lyrics and harmony even when the *sound* doesn't change,
+and this detector deliberately fires only on audible spectral change. It
+under-segments by design: high precision is the right bias for video
+editing, where a wrong cut is worse than a missed one. Boundaries are not
+bar-snapped (snapping to the musical grid is an agent-side decision — see
+`examples/edl.rs`).
+
 Reproduce the numbers:
 
 ```sh
-scripts/fetch_datasets.sh   # downloads Ballroom audio + annotations (research use only)
+scripts/fetch_datasets.sh   # downloads Ballroom + RWC-P audio + annotations (research use only)
 cargo run --release --example eval -- datasets/BallroomData datasets/ballroom-annotations --engine neural
+cargo run --release --example eval_sections -- datasets/rwc-audio datasets/rwc-annotations-archive/AIST_RWC-MDB-P-2001_CHORUS
 ```
 
 ## Roadmap
