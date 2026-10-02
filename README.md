@@ -41,9 +41,11 @@ beatloc ./music/ --output-dir timelines/ -r    # batch: one JSON per file, recur
 ```
 
 Input: WAV, MP3, FLAC, OGG/Vorbis, AAC/M4A (pure-Rust decoding via
-[Symphonia](https://github.com/pdeljanov/Symphonia)). AAC note: encoder
-delay is not yet trimmed by the decoder — timestamps may be off by up to
-~50 ms for AAC files; the other formats are sample-accurate.
+[Symphonia](https://github.com/pdeljanov/Symphonia)). Timing caveats: AAC
+encoder delay is not yet trimmed by the decoder, and MP3s without a
+Xing/LAME gapless tag cannot be trimmed — both can shift timestamps by up
+to ~50 ms. Untagged MP3s are detected at decode time and produce a stderr
+warning; everything else is sample-accurate.
 
 Contract for machine consumers:
 

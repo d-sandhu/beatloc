@@ -12,6 +12,7 @@
 use std::fs::File;
 use std::path::Path;
 
+use symphonia::core::codecs::audio::well_known::CODEC_ID_MP3;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
@@ -31,6 +32,13 @@ pub struct DecodedAudio {
     pub channels: usize,
     /// Short codec identifier, e.g. "mp3", "flac", "pcm-s16le".
     pub codec: String,
+    /// Whether encoder delay/padding was actually trimmed during decode.
+    /// `Some(true)`: MP3 with a Xing/LAME tag — sample-accurate.
+    /// `Some(false)`: MP3 WITHOUT the tag — decoder delay (~12–50 ms) could
+    /// not be removed; callers should warn that timestamps may be shifted.
+    /// `None`: codec with no per-file trim detection (WAV/FLAC/OGG are exact;
+    /// AAC is never trimmed by Symphonia — see crate-level docs).
+    pub encoder_delay_trimmed: Option<bool>,
 }
 
 impl DecodedAudio {
@@ -81,6 +89,11 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio, BeatlocError> {
     let mut scratch: Vec<f32> = Vec::new();
     let mut channels: Option<usize> = params.channels.map(|c| c.count());
     let mut sample_rate: Option<u32> = params.sample_rate;
+    // Gapless detection: the MP3 demuxer sets packet trim fields from the
+    // Xing/LAME tag. If NO packet ever carries a trim, the file has no tag
+    // and the encoder delay is still present in the output samples.
+    let is_mp3 = params.codec == CODEC_ID_MP3;
+    let mut saw_trim = false;
 
     loop {
         let packet = match reader.next_packet() {
@@ -91,6 +104,7 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio, BeatlocError> {
         if packet.track_id != track_id {
             continue;
         }
+        saw_trim |= packet.trim_start.get() > 0 || packet.trim_end.get() > 0;
         match decoder.decode(&packet) {
             Ok(buf) => {
                 let spec = buf.spec();
@@ -124,5 +138,7 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio, BeatlocError> {
         }
     }
 
-    Ok(DecodedAudio { samples: mono, sample_rate, channels, codec })
+    let encoder_delay_trimmed = is_mp3.then_some(saw_trim);
+
+    Ok(DecodedAudio { samples: mono, sample_rate, channels, codec, encoder_delay_trimmed })
 }

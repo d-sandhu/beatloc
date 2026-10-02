@@ -52,3 +52,46 @@ fn aac_m4a_matches_wav_within_encoder_delay() {
     // AAC encoder delay is not trimmed by Symphonia: allow it, assert bounded.
     assert!(max_offset(&reference, &m4a) < 0.12, "m4a onsets beyond encoder-delay bound");
 }
+
+/// Gapless detection (decode-level): only MP3 carries per-file trim state.
+#[test]
+fn encoder_delay_trim_flag() {
+    use beatloc::decode::decode_file;
+    use std::path::Path;
+
+    let wav = decode_file(Path::new(REFERENCE)).unwrap();
+    assert_eq!(wav.encoder_delay_trimmed, None, "WAV has no trim concept");
+
+    let tagged = decode_file(Path::new("tests/fixtures/clicks_120bpm.mp3")).unwrap();
+    assert_eq!(tagged.encoder_delay_trimmed, Some(true), "tagged MP3 must trim");
+
+    let untagged = decode_file(Path::new("tests/fixtures/clicks_120bpm_untrimmed.mp3")).unwrap();
+    assert_eq!(untagged.encoder_delay_trimmed, Some(false), "untagged MP3 must be flagged");
+}
+
+/// The measurement behind the warning: how far do onsets actually drift on
+/// an MP3 with no Xing/LAME tag? Assert bounded, print the measured value.
+#[test]
+fn untagged_mp3_shift_is_bounded() {
+    let reference = onset_times(REFERENCE);
+    let tagged = onset_times("tests/fixtures/clicks_120bpm.mp3");
+    let untagged = onset_times("tests/fixtures/clicks_120bpm_untrimmed.mp3");
+
+    // Sanity: the tagged file agrees with WAV tightly.
+    assert_eq!(tagged.len(), reference.len());
+    assert!(max_offset(&reference, &tagged) < 0.06, "tagged mp3 drifted");
+
+    // The untagged file must decode the same onsets, but shifted by the
+    // untrimmed encoder delay — measured here so the README's "~50 ms"
+    // claim is backed by a number, not folklore.
+    assert_eq!(untagged.len(), reference.len());
+    let shift_ms = untagged
+        .iter()
+        .zip(reference.iter())
+        .map(|(u, r)| (u - r) * 1000.0)
+        .sum::<f64>()
+        / untagged.len() as f64;
+    eprintln!("measured untagged-MP3 onset shift: {shift_ms:+.1} ms");
+    assert!(shift_ms > 0.0, "expected a positive (late) shift, got {shift_ms:.1} ms");
+    assert!(shift_ms < 60.0, "shift {shift_ms:.1} ms exceeds the documented bound");
+}

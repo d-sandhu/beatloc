@@ -22,7 +22,9 @@
 //!
 //! Known limitations (documented, not hidden):
 //! - MP3 files without a Xing/LAME tag carry encoder delay that cannot be
-//!   trimmed; timestamps may shift by up to ~50 ms for such files.
+//!   trimmed; timestamps may shift by up to ~50 ms for such files. These
+//!   files are detected at decode time and a warning is printed to stderr
+//!   (measured shift on the test fixture: +40 ms).
 //! - AAC (incl. .m4a): Symphonia does not yet trim encoder delay/padding
 //!   for AAC — timestamps may shift by up to ~50 ms. WAV/MP3/FLAC/OGG are
 //!   sample-accurate.
@@ -104,6 +106,13 @@ pub struct AnalysisOptions {
 /// Run the full V0.1 pipeline: decode → downmix → resample → features → timeline.
 pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, BeatlocError> {
     let decoded = decode::decode_file(path)?;
+    if decoded.encoder_delay_trimmed == Some(false) {
+        eprintln!(
+            "warning: {}: MP3 has no Xing/LAME gapless tag — encoder delay cannot be \
+             trimmed; all timestamps may be shifted by up to ~50 ms",
+            path.display()
+        );
+    }
     let duration_seconds = decoded.duration_seconds();
 
     let mono = dsp::resample::to_analysis_rate(&decoded.samples, decoded.sample_rate)?;
