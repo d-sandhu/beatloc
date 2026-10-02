@@ -5,7 +5,7 @@
 mod common;
 
 use beatloc::eval::matched_offsets;
-use beatloc::{AnalysisOptions, Timeline, analyze_file};
+use beatloc::{AnalysisOptions, Engine, Timeline, analyze_file};
 
 fn click_times(bpm: f64, count: usize, start: f64) -> Vec<f64> {
     (0..count).map(|i| start + i as f64 * 60.0 / bpm).collect()
@@ -14,7 +14,7 @@ fn click_times(bpm: f64, count: usize, start: f64) -> Vec<f64> {
 fn analyze_clicks(name: &str, sample_rate: u32, times: &[f64], duration: f64) -> Timeline {
     let path = common::temp_wav_path(name);
     common::write_wav_i16(&path, sample_rate, 1, &common::click_track(sample_rate, times, duration));
-    let timeline = analyze_file(&path, AnalysisOptions::default()).expect("analysis failed");
+    let timeline = analyze_file(&path, AnalysisOptions { engine: Engine::Dsp, ..Default::default() }).expect("analysis failed");
     std::fs::remove_file(&path).ok();
     timeline
 }
@@ -31,7 +31,7 @@ fn tracks_120_bpm_click_train() {
     let tempo = t.tempo.as_ref().expect("tempo estimated");
     assert_eq!(tempo.engine, "dsp-ellis2007");
     assert!((tempo.bpm - 120.0).abs() < 1.5, "bpm {}", tempo.bpm);
-    assert!(tempo.periodicity > 0.5, "periodicity {}", tempo.periodicity);
+    assert!(tempo.periodicity.unwrap() > 0.5, "periodicity {:?}", tempo.periodicity);
 
     let beats = beat_times(&t);
     assert_eq!(beats.len(), truth.len(), "beats {beats:?}");
@@ -64,7 +64,7 @@ fn silence_yields_no_tempo_and_empty_beats() {
     let path = common::temp_wav_path("beats-silence.wav");
     common::write_wav_i16(&path, 22_050, 1, &vec![0.0f32; 22_050 * 2]);
 
-    let t = analyze_file(&path, AnalysisOptions::default()).expect("analysis failed");
+    let t = analyze_file(&path, AnalysisOptions { engine: Engine::Dsp, ..Default::default() }).expect("analysis failed");
     assert!(t.tempo.is_none(), "no tempo may be invented for silence");
     assert!(t.beats.items.is_empty());
 

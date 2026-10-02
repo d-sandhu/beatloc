@@ -27,11 +27,12 @@
 //!   mono audio at the analysis rate). Streaming decode is planned before the
 //!   neural engine lands.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub mod decode;
 pub mod dsp;
 pub mod eval;
+pub mod inference;
 pub mod serialize;
 pub mod timeline;
 
@@ -49,7 +50,12 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.2.0";
+pub const SCHEMA_VERSION: &str = "0.3.0";
+
+/// Default locations of the ONNX model artifacts (regenerate with
+/// `scripts/export_model.py`; see models/manifest.json for provenance).
+pub const DEFAULT_BEAT_MODEL: &str = "models/beat_this_small0.onnx";
+pub const DEFAULT_MEL_MODEL: &str = "models/mel_spectrogram.onnx";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BeatlocError {
@@ -61,12 +67,33 @@ pub enum BeatlocError {
     Decode(String),
     #[error("resampling failed: {0}")]
     Resample(String),
+    #[error("neural inference failed: {0}")]
+    Inference(String),
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+/// Which beat engine to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Engine {
+    /// Neural if the model files are present, DSP otherwise (recorded in
+    /// each section's `engine` provenance field either way).
+    #[default]
+    Auto,
+    /// Classical DSP baseline (Ellis 2007 DP). No downbeats.
+    Dsp,
+    /// Beat This! neural engine. Errors if the model files are missing.
+    Neural,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct AnalysisOptions {
     /// Include dense per-frame curves (energy, onset strength) in the output.
     pub include_curves: bool,
+    /// Beat engine selection (default: auto).
+    pub engine: Engine,
+    /// Beat model ONNX path (default: ./models/beat_this_small0.onnx).
+    pub beat_model: Option<PathBuf>,
+    /// Mel frontend ONNX path (default: ./models/mel_spectrogram.onnx).
+    pub mel_model: Option<PathBuf>,
 }
 
 /// Run the full V0.1 pipeline: decode → downmix → resample → features → timeline.
@@ -79,34 +106,74 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
     let flux = dsp::onset::onset_strength(&mono, STFT_WINDOW, STFT_HOP);
     let onsets = dsp::onset::pick_onsets(&flux, ANALYSIS_SAMPLE_RATE, STFT_WINDOW, STFT_HOP);
 
-    // V0.2: classical beat baseline on the same envelope (Ellis 2007).
+    // V0.2/V0.3: beat engine. DSP is the baseline; neural runs when selected
+    // and its model files are available.
     let fps = ANALYSIS_SAMPLE_RATE as f64 / STFT_HOP as f64;
-    let (tempo, beats) = match dsp::beat::track_beats(&flux, fps) {
-        Some(track) => (
-            Some(timeline::Tempo {
-                engine: dsp::beat::ENGINE,
-                bpm: track.bpm,
-                periodicity: track.periodicity,
-            }),
-            timeline::Beats {
-                engine: dsp::beat::ENGINE,
-                items: track
-                    .frames
-                    .iter()
-                    .enumerate()
-                    .map(|(index, &frame)| timeline::Beat {
-                        time: dsp::frame_center_seconds(
-                            frame,
-                            STFT_WINDOW,
-                            STFT_HOP,
-                            ANALYSIS_SAMPLE_RATE,
-                        ),
-                        index: index as u32,
-                    })
-                    .collect(),
-            },
-        ),
-        None => (None, timeline::Beats { engine: dsp::beat::ENGINE, items: Vec::new() }),
+    let beat_model = options
+        .beat_model
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_BEAT_MODEL));
+    let mel_model =
+        options.mel_model.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_MEL_MODEL));
+    let neural_available = beat_model.is_file() && mel_model.is_file();
+
+    let (tempo, beats, downbeats) = match options.engine {
+        Engine::Neural if !neural_available => {
+            return Err(BeatlocError::Inference(format!(
+                "neural engine selected but model files are missing (expected {} and {}; \
+                 regenerate with scripts/export_model.py)",
+                beat_model.display(),
+                mel_model.display()
+            )));
+        }
+        Engine::Neural | Engine::Auto if neural_available => {
+            let engine = inference::NeuralEngine::load(&mel_model, &beat_model)?;
+            let out = engine.predict(&mono)?;
+            let name = model_engine_name(&beat_model);
+            let (items, downbeat_items) = timeline::build_bars(&out.beats, &out.downbeats);
+            let tempo = neural_tempo(&out.beats, &name);
+            (
+                tempo,
+                timeline::Beats { engine: name.clone(), items },
+                Some(timeline::Downbeats { engine: name, items: downbeat_items }),
+            )
+        }
+        _ => {
+            // DSP baseline (also the auto fallback when models are absent).
+            let (tempo, beats) = match dsp::beat::track_beats(&flux, fps) {
+                Some(track) => (
+                    Some(timeline::Tempo {
+                        engine: dsp::beat::ENGINE.to_string(),
+                        bpm: track.bpm,
+                        periodicity: Some(track.periodicity),
+                    }),
+                    timeline::Beats {
+                        engine: dsp::beat::ENGINE.to_string(),
+                        items: track
+                            .frames
+                            .iter()
+                            .enumerate()
+                            .map(|(index, &frame)| timeline::Beat {
+                                time: dsp::frame_center_seconds(
+                                    frame,
+                                    STFT_WINDOW,
+                                    STFT_HOP,
+                                    ANALYSIS_SAMPLE_RATE,
+                                ),
+                                index: index as u32,
+                                bar: None,
+                                bar_position: None,
+                            })
+                            .collect(),
+                    },
+                ),
+                None => (
+                    None,
+                    timeline::Beats { engine: dsp::beat::ENGINE.to_string(), items: Vec::new() },
+                ),
+            };
+            (tempo, beats, None)
+        }
     };
 
     let curves = options.include_curves.then(|| timeline::Curves {
@@ -142,7 +209,40 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
         },
         tempo,
         beats,
+        downbeats,
         onsets,
         curves,
+    })
+}
+
+/// Engine provenance string from a model file name, e.g.
+/// "beat_this_small0.onnx" → "beat-this-small0".
+fn model_engine_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .replace('_', "-")
+}
+
+/// Global tempo from (neural) beat times: BPM = 60 / median inter-beat
+/// interval. Deliberately simple; local tempo is a later milestone.
+fn neural_tempo(beats: &[f64], engine: &str) -> Option<timeline::Tempo> {
+    if beats.len() < 2 {
+        return None;
+    }
+    let mut ibis: Vec<f64> = beats.windows(2).map(|w| w[1] - w[0]).collect();
+    ibis.sort_by(f64::total_cmp);
+    let median = if ibis.len() % 2 == 1 {
+        ibis[ibis.len() / 2]
+    } else {
+        f64::midpoint(ibis[ibis.len() / 2 - 1], ibis[ibis.len() / 2])
+    };
+    if median <= 0.0 {
+        return None;
+    }
+    Some(timeline::Tempo {
+        engine: format!("{engine} (median-ibi)"),
+        bpm: 60.0 / median,
+        periodicity: None,
     })
 }

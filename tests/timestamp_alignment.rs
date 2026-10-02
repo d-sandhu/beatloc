@@ -15,7 +15,7 @@
 mod common;
 
 use beatloc::timeline::Onset;
-use beatloc::{AnalysisOptions, analyze_file};
+use beatloc::{AnalysisOptions, Engine, analyze_file};
 
 const CLICKS: [f64; 4] = [0.5, 1.0, 1.5, 2.0];
 const DURATION: f64 = 2.5;
@@ -49,7 +49,7 @@ fn onsets_align_at_native_analysis_rate() {
     let path = common::temp_wav_path("native.wav");
     common::write_wav_i16(&path, 22_050, 1, &common::click_track(22_050, &CLICKS, DURATION));
 
-    let t = analyze_file(&path, AnalysisOptions::default()).expect("analysis failed");
+    let t = analyze_file(&path, AnalysisOptions { engine: Engine::Dsp, ..Default::default() }).expect("analysis failed");
 
     assert_eq!(t.source.sample_rate, 22_050);
     assert_eq!(t.source.channels, 1);
@@ -67,7 +67,7 @@ fn onsets_align_after_resampling_and_downmix() {
     let stereo = common::to_interleaved(&mono, 2);
     common::write_wav_i16(&path, 44_100, 2, &stereo);
 
-    let t = analyze_file(&path, AnalysisOptions::default()).expect("analysis failed");
+    let t = analyze_file(&path, AnalysisOptions { engine: Engine::Dsp, ..Default::default() }).expect("analysis failed");
 
     assert_eq!(t.source.sample_rate, 44_100);
     assert_eq!(t.source.channels, 2);
@@ -82,8 +82,10 @@ fn output_is_deterministic() {
     let path = common::temp_wav_path("determinism.wav");
     common::write_wav_i16(&path, 22_050, 1, &common::click_track(22_050, &CLICKS, DURATION));
 
-    let opts = AnalysisOptions { include_curves: true };
-    let a = beatloc::serialize::to_json_string(&analyze_file(&path, opts).unwrap(), false).unwrap();
+    let opts = AnalysisOptions { include_curves: true, engine: Engine::Dsp, ..Default::default() };
+    let a =
+        beatloc::serialize::to_json_string(&analyze_file(&path, opts.clone()).unwrap(), false)
+            .unwrap();
     let b = beatloc::serialize::to_json_string(&analyze_file(&path, opts).unwrap(), false).unwrap();
     assert_eq!(a, b);
 
@@ -95,7 +97,7 @@ fn silence_yields_no_onsets_and_floored_energy() {
     let path = common::temp_wav_path("silence.wav");
     common::write_wav_i16(&path, 22_050, 1, &vec![0.0f32; 22_050]);
 
-    let t = analyze_file(&path, AnalysisOptions { include_curves: true }).expect("analysis failed");
+    let t = analyze_file(&path, AnalysisOptions { include_curves: true, engine: Engine::Dsp, ..Default::default() }).expect("analysis failed");
     assert!(t.onsets.is_empty());
     let curves = t.curves.expect("curves requested");
     assert!(curves.energy.values.iter().all(|&v| v == -120.0));
@@ -109,7 +111,7 @@ fn curves_follow_the_documented_grid() {
     let path = common::temp_wav_path("grid.wav");
     common::write_wav_i16(&path, 22_050, 1, &common::click_track(22_050, &CLICKS, DURATION));
 
-    let t = analyze_file(&path, AnalysisOptions { include_curves: true }).unwrap();
+    let t = analyze_file(&path, AnalysisOptions { include_curves: true, engine: Engine::Dsp, ..Default::default() }).unwrap();
     let curves = t.curves.unwrap();
 
     // Grid: hop 441 at 22050 Hz = 0.02 s; first centre at 512/22050 s.

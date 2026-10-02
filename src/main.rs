@@ -7,10 +7,12 @@
 //!   (clap's default).
 //! - `--output` never overwrites an existing file unless `--force` is given.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+use beatloc::{AnalysisOptions, Engine};
 
 #[derive(Parser)]
 #[command(
@@ -41,6 +43,26 @@ struct Cli {
     /// Pretty-print the JSON output
     #[arg(long)]
     pretty: bool,
+
+    /// Beat engine: "neural" (Beat This!, needs model files), "dsp"
+    /// (classical baseline), or "auto" (neural if models are present)
+    #[arg(long, value_enum, default_value_t = EngineArg::Auto)]
+    engine: EngineArg,
+
+    /// Path to the beat model ONNX (default: ./models/beat_this_small0.onnx)
+    #[arg(long)]
+    model: Option<PathBuf>,
+
+    /// Path to the mel frontend ONNX (default: ./models/mel_spectrogram.onnx)
+    #[arg(long = "mel-model")]
+    mel_model: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum EngineArg {
+    Auto,
+    Dsp,
+    Neural,
 }
 
 fn main() -> ExitCode {
@@ -54,9 +76,26 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
+    let engine = match cli.engine {
+        EngineArg::Auto => Engine::Auto,
+        EngineArg::Dsp => Engine::Dsp,
+        EngineArg::Neural => Engine::Neural,
+    };
+    if engine == Engine::Auto && !models_available(&cli) {
+        eprintln!(
+            "note: neural models not found (default: ./models/, see scripts/export_model.py); \
+             using the dsp engine"
+        );
+    }
+
     let timeline = beatloc::analyze_file(
         &cli.input,
-        beatloc::AnalysisOptions { include_curves: cli.curves },
+        AnalysisOptions {
+            include_curves: cli.curves,
+            engine,
+            beat_model: cli.model.clone(),
+            mel_model: cli.mel_model.clone(),
+        },
     )?;
     let json = beatloc::serialize::to_json_string(&timeline, cli.pretty)?;
 
@@ -71,4 +110,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         None => println!("{json}"),
     }
     Ok(())
+}
+
+fn models_available(cli: &Cli) -> bool {
+    let beat =
+        cli.model.clone().unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_BEAT_MODEL));
+    let mel =
+        cli.mel_model.clone().unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_MEL_MODEL));
+    Path::new(&beat).is_file() && Path::new(&mel).is_file()
 }

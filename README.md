@@ -7,8 +7,8 @@ reasoning about raw audio.
 The CLI supplies musical information; the agent makes the creative decisions.
 The analyzer itself contains no LLM.
 
-**Status: early development (V0.2 — beat timing, DSP baseline).** See the
-roadmap below. Output schema is versioned but unstable until 1.0.0.
+**Status: early development (V0.3 — neural beat + downbeat engine).** See
+the roadmap below. Output schema is versioned but unstable until 1.0.0.
 
 ## Install / build
 
@@ -17,6 +17,16 @@ cargo build --release        # produces a single self-contained binary
 cargo test                   # unit + integration + CLI contract tests
 ```
 
+The neural engine needs its ONNX model files (not committed; see
+`models/manifest.json` for provenance). Regenerate them with:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install beat-this onnxruntime onnxscript
+.venv/bin/python scripts/export_model.py small0   # or final0 (full accuracy)
+```
+
+Without model files, beatloc falls back to the DSP baseline (`--engine dsp`).
+
 ## Usage
 
 ```sh
@@ -24,6 +34,9 @@ beatloc track.mp3 --json                       # JSON timeline to stdout
 beatloc track.mp3 --output timeline.json       # to a file (never overwrites...)
 beatloc track.mp3 -o timeline.json --force     # ...unless forced
 beatloc track.mp3 --curves --json              # include dense per-frame curves
+beatloc track.mp3 --engine dsp --json          # classical baseline (no downbeats)
+beatloc track.mp3 --engine neural --json       # neural engine (beats + downbeats)
+beatloc track.mp3 --model models/beat_this_final0.onnx --json   # full-accuracy model
 ```
 
 Input: WAV, MP3, FLAC (pure-Rust decoding via
@@ -34,18 +47,20 @@ Contract for machine consumers:
 - stdout carries **only** the JSON result; diagnostics go to stderr.
 - Exit codes: `0` success, `1` analysis/IO error, `2` usage error.
 
-## Output (schema v0.2.0)
+## Output (schema v0.3.0)
 
 ```jsonc
 {
-  "format":    { "name": "beatloc-timeline", "version": "0.2.0" },
+  "format":    { "name": "beatloc-timeline", "version": "0.3.0" },
   "generator": { "name": "beatloc", "version": "0.1.0" },
   "source":    { "duration_seconds": 9.5, "sample_rate": 44100, "channels": 2, "codec": "mp3" },
   "analysis":  { "sample_rate": 22050, "window_size": 1024, "hop_size": 441,
                  "window": "hann (periodic)",
                  "timestamps": "seconds from decoded stream start (gapless-trimmed) to frame centre" },
-  "tempo":     { "engine": "dsp-ellis2007", "bpm": 120.0, "periodicity": 0.63 },
-  "beats":     { "engine": "dsp-ellis2007", "items": [ { "time": 1.003, "index": 0 } ] },
+  "tempo":     { "engine": "beat-this-small0 (median-ibi)", "bpm": 120.0 },
+  "beats":     { "engine": "beat-this-small0",
+                 "items": [ { "time": 1.02, "index": 0, "bar": 1, "bar_position": 1 } ] },
+  "downbeats": { "engine": "beat-this-small0", "items": [ { "time": 1.02, "bar": 1 } ] },
   "onsets":    [ { "time": 0.983, "strength": 12.34 } ],
   "curves":    { "energy":         { "start_seconds": 0.0232, "hop_seconds": 0.02, "units": "dbfs", "values": [] },
                  "onset_strength": { "start_seconds": 0.0232, "hop_seconds": 0.02, "units": "spectral_flux", "values": [] } }
@@ -54,10 +69,17 @@ Contract for machine consumers:
 
 - `tempo` is **absent** when no periodicity could be established (e.g.
   silence) — unknown is represented by omission, never a sentinel value.
-  `periodicity` is an uncalibrated diagnostic, not a probability.
-- `beats.items[].index` is a 0-based counter, not a bar position; meter is
-  unknown until downbeats land (V0.3). Beats are never extrapolated into
-  regions without onset evidence.
+- `beats.items[].index` is a 0-based counter. `bar` is 1-based from the
+  first detected downbeat; `bar_position` counts from 1 within the bar
+  (downbeat = 1). Neither is a time-signature claim; both are absent when
+  downbeats are unknown (e.g. the DSP engine) or before the first downbeat
+  (anacrusis).
+- `downbeats` is absent for engines without downbeat support.
+- `periodicity` (DSP tempo only) is an uncalibrated diagnostic, not a
+  probability.
+- Neural-engine times follow the model's own frame grid (frame index / 50 s);
+  DSP-feature times use unpadded frame centres. Conventions are recorded in
+  `analysis` and each section's `engine` field.
 
 Conventions:
 
@@ -70,21 +92,25 @@ Conventions:
   flux in arbitrary, track-relative units.
 - Dense curves are omitted unless `--curves` is passed.
 
-Current limitations (honest, measured): the beat engine is a classical
-global-tempo DP tracker (Ellis 2007). On the Ballroom dataset (698 tracks,
-mir_eval conventions, first 5 s trimmed): **F-measure 0.77, CMLt 0.57, AMLt
-0.85**, mean signed offset +7 ms. Known failure modes: it can lock onto the
-offbeat (tempo right, phase 180° out) and assumes one tempo per track — the
-planned neural engine exists precisely to close this gap (reference point:
-Beat This! scores ~0.975 F1 on the same corpus). Onset detection is a
-spectral-flux heuristic tuned for clear attacks. No downbeats or bar
-positions yet.
+Measured on the Ballroom dataset (698 tracks, mir_eval conventions, first
+5 s trimmed):
+
+| Engine | Beat F1 | CMLt | AMLt | Downbeat F1 | Mean signed offset |
+|---|---|---|---|---|---|
+| `beat-this-small0` (default, neural) | **0.984** | 0.979 | 0.980 | **0.982** | +3.2 ms |
+| `dsp-ellis2007` (baseline) | 0.771 | 0.575 | 0.850 | — (unsupported) | +7.1 ms |
+
+Honest limitations: the neural engine inherits Beat This!'s training-data
+biases (Western 4/4-heavy); it can still lock offbeat on unusual textures,
+and it does not report a time signature — only beat positions within
+detected bars. Onset detection is a spectral-flux heuristic. The DSP engine
+assumes one global tempo and exists as a fallback/baseline, not the product.
 
 Reproduce the numbers:
 
 ```sh
 scripts/fetch_datasets.sh   # downloads Ballroom audio + annotations (research use only)
-cargo run --release --example eval -- datasets/BallroomData datasets/ballroom-annotations
+cargo run --release --example eval -- datasets/BallroomData datasets/ballroom-annotations --engine neural
 ```
 
 ## Roadmap
@@ -93,7 +119,7 @@ cargo run --release --example eval -- datasets/BallroomData datasets/ballroom-an
 |---|---|
 | **V0.1** ✅ | decode, metadata, energy, onsets, versioned JSON, alignment tests |
 | **V0.2** ✅ | beats + global tempo (DSP baseline); Rust eval metrics differential-tested vs mir_eval; measured accuracy on Ballroom |
-| V0.3 | downbeats & bar positions via neural inference, parity-tested |
+| **V0.3** ✅ | neural engine (Beat This! via rten/ONNX): downbeats, bar positions, parity-tested vs the Python reference |
 | V0.4 | release hardening: schema 1.0.0, cross-platform builds, benchmarks |
 | later | section boundaries & labels (chorus entrances, drops), transitions |
 

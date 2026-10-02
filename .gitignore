@@ -9,4 +9,7 @@
 # Dev-only Python environment (mir_eval differential testing)
 /.venv/
 
+# Neural model artifacts (regenerate with scripts/export_model.py)
+/models/
+
 .DS_Store
