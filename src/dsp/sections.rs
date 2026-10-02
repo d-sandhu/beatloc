@@ -1,25 +1,40 @@
-//! Section boundaries via feature-contrast novelty (classical, model-free).
+//! Section boundaries via spectral self-similarity novelty (v2).
 //!
-//! Method: per frame we take [energy (dBFS), log1p(onset flux)], z-normalize
-//! each dimension over the track, and measure the Euclidean distance between
-//! the mean feature vector of the `CONTRAST` seconds before and after each
-//! frame — a two-sided "checkerboard" novelty score. Boundaries are strict
-//! local maxima above mean + 1.5σ, at least `MIN_GAP` seconds apart.
+//! Method: magnitude STFT frames are compressed into `N_BANDS` log-spaced
+//! frequency bands (30 Hz–10 kHz, log1p), each band z-normalized over time.
+//! Novelty at frame t is the cosine distance between the mean band vector of
+//! the `CONTRAST` seconds before t and after t (a two-sided contrast; the
+//! useful core of Foote's checkerboard without the full matrix). Boundaries
+//! are strict local maxima above mean + 1.5σ and at least `MIN_GAP` seconds
+//! apart. Novelty is only computed where both contrast windows are full, so
+//! no boundaries are reported within `CONTRAST` seconds of the file edges
+//! (end-of-file fades are not musical transitions).
 //!
-//! This detects *changes* in level/texture (quiet→loud, sparse→dense). It
-//! deliberately does NOT label what a section *is* (intro/verse/chorus):
-//! boundary detection and section semantics are different problems, and the
-//! plan requires keeping them separate. Strengths are relative within the
-//! track (peak novelty normalized to [0, 1]) — an uncalibrated diagnostic,
-//! not a probability.
+//! v1 → v2: features went from [energy, flux] scalars to 32 spectral bands,
+//! so texture changes at constant loudness (e.g. bass drops out, hats enter)
+//! are now visible. Validated on synthetic fixtures and the maintainer's own
+//! tracks; an annotated-structure benchmark is blocked on a legally
+//! downloadable corpus (RWC audio is a 13.4 GB monolith; Harmonix ships no
+//! audio).
+//!
+//! This detects THAT something changed, never WHAT a section is — no
+//! semantic labels. Strengths are relative within the track (peak novelty
+//! normalized to [0, 1]) — an uncalibrated ranking aid, not a probability.
 
+use super::stft::stft_magnitudes;
+
+/// Number of log-spaced frequency bands.
+const N_BANDS: usize = 32;
+/// Band edge range in Hz.
+const BAND_LO_HZ: f32 = 30.0;
+const BAND_HI_HZ: f32 = 10_000.0;
 /// Half-width of the contrast window, in seconds.
 const CONTRAST_SECONDS: f64 = 2.0;
 /// Minimum separation between boundaries, in seconds.
 const MIN_GAP_SECONDS: f64 = 8.0;
-/// Peak threshold: mean + 1.5 × std of the novelty curve.
+/// Peak threshold: mean + k × std of the novelty curve.
 const PEAK_SIGMAS: f64 = 1.5;
-/// Novelty smoothing window, in seconds.
+/// Novelty smoothing radius, in seconds.
 const SMOOTH_SECONDS: f64 = 1.0;
 
 /// One detected section boundary.
@@ -32,34 +47,26 @@ pub struct Transition {
     pub strength: f32,
 }
 
-/// Detect transitions on the shared frame grid from the energy and
-/// onset-strength curves (both are `hop`-spaced, same length).
-pub fn detect_transitions(energy_dbfs: &[f32], flux: &[f32], hop_seconds: f64) -> Vec<Transition> {
-    let n = energy_dbfs.len().min(flux.len());
+/// Detect transitions from magnitude STFT frames on the shared grid.
+pub fn detect_transitions(mags: &[Vec<f32>], hop_seconds: f64, sample_rate: u32) -> Vec<Transition> {
+    let n = mags.len();
     if n < 4 {
         return Vec::new();
     }
+    let features = band_features(mags, sample_rate);
+    let features = z_normalize_bands(&features);
 
-    // Feature matrix: [z(dbfs), z(log1p(flux))] per frame.
-    let feat_energy = z_normalize(&energy_dbfs[..n]);
-    let feat_flux = z_normalize(&flux[..n].iter().map(|&v| v.ln_1p()).collect::<Vec<f32>>());
-
-    // Two-sided contrast novelty.
-    let w = (CONTRAST_SECONDS / hop_seconds) as usize; // half-window in frames
+    let w = (CONTRAST_SECONDS / hop_seconds) as usize;
     let mut novelty = vec![0.0f64; n];
-    for t in 0..n {
-        let (a0, a1) = (t.saturating_sub(w), t);
-        let (b0, b1) = (t, (t + w).min(n));
-        if a1 == a0 || b1 == b0 {
-            continue;
-        }
-        let mean_a = window_mean(&feat_energy, &feat_flux, a0, a1);
-        let mean_b = window_mean(&feat_energy, &feat_flux, b0, b1);
+    // Novelty is only defined where BOTH contrast windows are full: within
+    // CONTRAST seconds of the file edges the windows would be asymmetric, so
+    // no boundaries are reported there (an end-of-file fade is not a musical
+    // transition, and a section shorter than 2 s is not useful anyway).
+    for t in w..n.saturating_sub(w) {
         novelty[t] =
-            ((mean_a[0] - mean_b[0]).powi(2) + (mean_a[1] - mean_b[1]).powi(2)).sqrt();
+            cosine_distance(&band_mean(&features, t - w, t), &band_mean(&features, t, t + w));
     }
 
-    // Smooth, then peak-pick with a minimum gap.
     let s = (SMOOTH_SECONDS / hop_seconds).max(1.0) as usize;
     let novelty = moving_average(&novelty, s);
     let max_val = novelty.iter().copied().fold(0.0f64, f64::max);
@@ -71,48 +78,85 @@ pub fn detect_transitions(energy_dbfs: &[f32], flux: &[f32], hop_seconds: f64) -
     let threshold = mean + PEAK_SIGMAS * std;
     let min_gap = (MIN_GAP_SECONDS / hop_seconds) as usize;
 
-    let mut transitions = Vec::new();
-    let mut last: Option<usize> = None;
-    for t in 1..n.saturating_sub(1) {
+    let mut transitions: Vec<Transition> = Vec::new();
+    for t in (w + 1)..(n.saturating_sub(w + 1)) {
         let v = novelty[t];
         if v > threshold && v > novelty[t - 1] && v >= novelty[t + 1] {
-            if let Some(prev) = last {
-                if t - prev < min_gap {
+            if let Some(prev) = transitions.last() {
+                if t - prev.frame < min_gap {
                     // Too close: keep the stronger of the two.
-                    if let Some(prev_t) = transitions.last_mut() {
-                        if novelty[t] > novelty[prev] {
-                            *prev_t = Transition {
-                                frame: t,
-                                strength: (v / max_val) as f32,
-                            };
-                            last = Some(t);
-                        }
-                        continue;
+                    if v > novelty[prev.frame] {
+                        *transitions.last_mut().unwrap() =
+                            Transition { frame: t, strength: (v / max_val) as f32 };
                     }
+                    continue;
                 }
             }
             transitions.push(Transition { frame: t, strength: (v / max_val) as f32 });
-            last = Some(t);
         }
     }
     transitions
 }
 
-fn z_normalize(values: &[f32]) -> Vec<f64> {
-    let n = values.len() as f64;
-    let mean = values.iter().map(|&v| f64::from(v)).sum::<f64>() / n;
-    let std = (values.iter().map(|&v| (f64::from(v) - mean).powi(2)).sum::<f64>() / n).sqrt();
-    if std <= 0.0 {
-        return vec![0.0; values.len()];
+/// Compress magnitude frames into log-spaced band energies (log1p-scaled).
+fn band_features(mags: &[Vec<f32>], sample_rate: u32) -> Vec<Vec<f32>> {
+    let n_bins = mags[0].len();
+    let bin_hz = sample_rate as f32 / (2 * (n_bins - 1)) as f32;
+    let ratio = BAND_HI_HZ / BAND_LO_HZ;
+    let edge = |i: usize| BAND_LO_HZ * ratio.powf(i as f32 / N_BANDS as f32);
+    // Precompute bin → band membership.
+    let mut band_of_bin = vec![0usize; n_bins];
+    for (bin, band) in band_of_bin.iter_mut().enumerate() {
+        let f = bin as f32 * bin_hz;
+        *band = (0..N_BANDS).find(|&b| f < edge(b + 1)).unwrap_or(N_BANDS - 1);
     }
-    values.iter().map(|&v| (f64::from(v) - mean) / std).collect()
+    mags.iter()
+        .map(|frame| {
+            let mut bands = vec![0.0f32; N_BANDS];
+            for (bin, &m) in frame.iter().enumerate() {
+                bands[band_of_bin[bin]] += m;
+            }
+            bands.iter_mut().for_each(|v| *v = v.ln_1p());
+            bands
+        })
+        .collect()
 }
 
-fn window_mean(energy: &[f64], flux: &[f64], from: usize, to: usize) -> [f64; 2] {
-    let len = (to - from) as f64;
-    let e = energy[from..to].iter().sum::<f64>() / len;
-    let f = flux[from..to].iter().sum::<f64>() / len;
-    [e, f]
+/// z-normalize each band over time (zero-variance bands become all-zero).
+fn z_normalize_bands(features: &[Vec<f32>]) -> Vec<Vec<f64>> {
+    let n = features.len() as f64;
+    let mut out = vec![vec![0.0f64; N_BANDS]; features.len()];
+    for b in 0..N_BANDS {
+        let mean = features.iter().map(|f| f64::from(f[b])).sum::<f64>() / n;
+        let std = (features.iter().map(|f| (f64::from(f[b]) - mean).powi(2)).sum::<f64>() / n).sqrt();
+        if std > 0.0 {
+            for (i, f) in features.iter().enumerate() {
+                out[i][b] = (f64::from(f[b]) - mean) / std;
+            }
+        }
+    }
+    out
+}
+
+fn band_mean(features: &[Vec<f64>], from: usize, to: usize) -> Vec<f64> {
+    let mut mean = vec![0.0f64; N_BANDS];
+    for f in &features[from..to] {
+        for (m, &v) in mean.iter_mut().zip(f) {
+            *m += v;
+        }
+    }
+    mean.iter_mut().for_each(|v| *v /= (to - from) as f64);
+    mean
+}
+
+fn cosine_distance(a: &[f64], b: &[f64]) -> f64 {
+    let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let nb = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if na <= 0.0 || nb <= 0.0 {
+        return 0.0;
+    }
+    1.0 - dot / (na * nb)
 }
 
 fn moving_average(values: &[f64], radius: usize) -> Vec<f64> {
@@ -130,35 +174,61 @@ fn moving_average(values: &[f64], radius: usize) -> Vec<f64> {
 mod tests {
     use super::*;
 
-    /// Quiet-then-loud synthetic: a clear transition must be found at the
-    /// halfway point, with no other boundaries.
-    #[test]
-    fn finds_the_obvious_transition() {
-        let fps = 50.0;
-        let frames = (20.0 * fps) as usize;
-        let mut energy = vec![-45.0f32; frames];
-        let mut flux = vec![0.05f32; frames];
-        for i in frames / 2..frames {
-            energy[i] = -12.0; // loud section
-            flux[i] = 0.6;
+    const SR: u32 = 22_050;
+    const N_BINS: usize = 513;
+    const FPS: f64 = 50.0;
+
+    /// Fake magnitude frames: energy only in bins [lo, hi) of each half.
+    fn synthetic_mags(half: &[(usize, usize, f32)], frames: usize) -> Vec<Vec<f32>> {
+        let mut mags = vec![vec![0.0f32; N_BINS]; frames];
+        for (i, frame) in mags.iter_mut().enumerate() {
+            let &(lo, hi, level) = if i < frames / 2 { &half[0] } else { &half[1] };
+            for v in &mut frame[lo..hi] {
+                *v = level;
+            }
         }
-        let transitions = detect_transitions(&energy, &flux, 1.0 / fps);
+        mags
+    }
+
+    #[test]
+    fn finds_loudness_and_texture_changes() {
+        // First half: low-frequency energy; second half: high-frequency.
+        let mags = synthetic_mags(&[(2, 40, 1.0), (200, 400, 1.0)], (30.0 * FPS) as usize);
+        let transitions = detect_transitions(&mags, 1.0 / FPS, SR);
         assert_eq!(transitions.len(), 1, "transitions: {transitions:?}");
-        let t = transitions[0].frame as f64 / fps;
-        assert!((t - 10.0).abs() < 1.0, "transition at {t} s, expected ~10 s");
-        assert!(transitions[0].strength > 0.9);
+        let t = transitions[0].frame as f64 / FPS;
+        assert!((t - 15.0).abs() < 1.5, "transition at {t} s, expected ~15 s");
     }
 
     #[test]
     fn constant_signal_has_no_transitions() {
-        let energy = vec![-20.0f32; 1000];
-        let flux = vec![0.1f32; 1000];
-        assert!(detect_transitions(&energy, &flux, 0.02).is_empty());
+        let mags = synthetic_mags(&[(2, 400, 1.0), (2, 400, 1.0)], 1000);
+        assert!(detect_transitions(&mags, 0.02, SR).is_empty());
+    }
+
+    #[test]
+    fn fades_at_file_edges_create_no_edge_boundaries() {
+        // A fade-out in the last 0.5 s of a 30 s file must never produce a
+        // boundary inside the final CONTRAST window (2 s) — the domain rule
+        // — even though its novelty bleed may legitimately fire earlier.
+        let frames = (30.0 * FPS) as usize;
+        let mut mags = synthetic_mags(&[(2, 200, 1.0), (2, 200, 1.0)], frames);
+        for (k, frame) in mags.iter_mut().skip(frames - 25).enumerate() {
+            let gain = 1.0 - k as f32 / 25.0; // fade to silence
+            for v in frame.iter_mut() {
+                *v *= gain;
+            }
+        }
+        let transitions = detect_transitions(&mags, 1.0 / FPS, SR);
+        assert!(
+            transitions.iter().all(|t| t.frame + 100 <= frames),
+            "boundary inside the final contrast window: {transitions:?}"
+        );
     }
 
     #[test]
     fn short_inputs_are_safe() {
-        assert!(detect_transitions(&[-20.0], &[0.1], 0.02).is_empty());
-        assert!(detect_transitions(&[], &[], 0.02).is_empty());
+        assert!(detect_transitions(&[], 0.02, SR).is_empty());
+        assert!(detect_transitions(&[vec![1.0; N_BINS]], 0.02, SR).is_empty());
     }
 }

@@ -105,14 +105,16 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
 
     let mono = dsp::resample::to_analysis_rate(&decoded.samples, decoded.sample_rate)?;
 
-    let flux = dsp::onset::onset_strength(&mono, STFT_WINDOW, STFT_HOP);
+    // One shared STFT grid feeds both the onset envelope and sections.
+    let mags = dsp::stft::stft_magnitudes(&mono, STFT_WINDOW, STFT_HOP);
+    let flux = dsp::onset::flux_from_mags(&mags);
     let onsets = dsp::onset::pick_onsets(&flux, ANALYSIS_SAMPLE_RATE, STFT_WINDOW, STFT_HOP);
     let energy = dsp::energy::frame_rms_dbfs(&mono, STFT_WINDOW, STFT_HOP);
 
-    // Sections: spans between consecutive transition boundaries (feature-
-    // contrast novelty over the shared frame grid; engine-independent).
+    // Sections: spans between consecutive transition boundaries (spectral
+    // self-similarity novelty over the shared grid; engine-independent).
     let hop_seconds = STFT_HOP as f64 / ANALYSIS_SAMPLE_RATE as f64;
-    let transitions = dsp::sections::detect_transitions(&energy, &flux, hop_seconds);
+    let transitions = dsp::sections::detect_transitions(&mags, hop_seconds, ANALYSIS_SAMPLE_RATE);
     let mut section_items = Vec::with_capacity(transitions.len() + 1);
     let mut start = 0.0f64;
     for (i, t) in transitions.iter().enumerate() {
@@ -138,7 +140,7 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             Some(transitions[n_transitions - 1].strength)
         },
     });
-    let sections = timeline::Sections { engine: "dsp-novelty-v1", items: section_items };
+    let sections = timeline::Sections { engine: "dsp-novelty-v2", items: section_items };
 
     // V0.2/V0.3: beat engine. DSP is the baseline; neural runs when selected
     // and its model files are available.

@@ -83,10 +83,12 @@ Contract for machine consumers:
   at each picked peak: how strongly the model asserted the event. They are
   **uncalibrated** — a relative trust signal within/across tracks, NOT a
   probability of correctness. `mean_score` summarizes per track.
-- `sections` come from a feature-contrast novelty detector
-  (`dsp-novelty-v1`): they mark THAT something changed, not WHAT it is
-  (no intro/verse/chorus labels). `transition_strength` ranks boundaries
-  within the same track only.
+- `sections` come from a spectral self-similarity novelty detector
+  (`dsp-novelty-v2`: 32 log-spaced bands, cosine contrast over ±2 s
+  windows): they mark THAT something changed, not WHAT it is (no
+  intro/verse/chorus labels). `transition_strength` ranks boundaries within
+  the same track only. No boundaries are reported within 2 s of the file
+  edges.
 - `periodicity` (DSP tempo only) is an uncalibrated diagnostic, not a
   probability.
 - Neural-engine times follow the model's own frame grid (frame index / 50 s);

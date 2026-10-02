@@ -31,7 +31,7 @@ fn quiet_to_loud_yields_two_sections() {
     )
     .expect("analysis failed");
 
-    assert_eq!(t.sections.engine, "dsp-novelty-v1");
+    assert_eq!(t.sections.engine, "dsp-novelty-v2");
     assert_eq!(t.sections.items.len(), 2, "sections: {:?}", t.sections.items);
     let boundary = t.sections.items[1].start;
     assert!((boundary - 10.0).abs() < 1.0, "boundary at {boundary} s, expected ~10 s");

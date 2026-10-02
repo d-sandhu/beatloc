@@ -19,47 +19,25 @@
 //!   evaluated against annotated onset data — treat strengths as relative.
 
 use super::frame_center_seconds;
+use super::stft::stft_magnitudes;
 use crate::timeline::Onset;
-use realfft::RealFftPlanner;
 
 /// Spectral flux envelope over the shared frame grid.
 pub fn onset_strength(samples: &[f32], window: usize, hop: usize) -> Vec<f32> {
-    if samples.len() < window || hop == 0 || window == 0 {
-        return Vec::new();
-    }
-    let n_frames = (samples.len() - window) / hop + 1;
+    flux_from_mags(&stft_magnitudes(samples, window, hop))
+}
 
-    let mut planner = RealFftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(window);
-    let mut in_buf = fft.make_input_vec();
-    let mut out_buf = fft.make_output_vec();
-
-    // Periodic Hann window (w[0] = 0; matches DSP convention, not the
-    // symmetric "window function" variant).
-    let win: Vec<f32> = (0..window)
-        .map(|n| 0.5 - 0.5 * (std::f32::consts::TAU * n as f32 / window as f32).cos())
-        .collect();
-
-    let mut flux = Vec::with_capacity(n_frames);
-    let mut prev_mag: Option<Vec<f32>> = None;
-
-    for frame in 0..n_frames {
-        let start = frame * hop;
-        for (dst, (&s, &w)) in in_buf
-            .iter_mut()
-            .zip(samples[start..start + window].iter().zip(win.iter()))
-        {
-            *dst = s * w;
-        }
-        fft.process(&mut in_buf, &mut out_buf).expect("buffer sizes are exact by construction");
-
-        let mag: Vec<f32> = out_buf.iter().map(|c| c.norm()).collect();
-        let value = match &prev_mag {
-            Some(prev) => mag.iter().zip(prev).map(|(a, b)| (a - b).max(0.0)).sum(),
+/// Spectral flux from precomputed magnitude frames:
+/// `flux[i] = Σ max(0, |X_i| − |X_{i−1}|)`, `flux[0] = 0`.
+pub fn flux_from_mags(mags: &[Vec<f32>]) -> Vec<f32> {
+    let mut flux = Vec::with_capacity(mags.len());
+    let mut prev: Option<&Vec<f32>> = None;
+    for m in mags {
+        flux.push(match prev {
+            Some(p) => m.iter().zip(p).map(|(a, b)| (a - b).max(0.0)).sum(),
             None => 0.0,
-        };
-        flux.push(value);
-        prev_mag = Some(mag);
+        });
+        prev = Some(m);
     }
     flux
 }
