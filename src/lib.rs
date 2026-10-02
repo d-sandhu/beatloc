@@ -23,6 +23,9 @@
 //! Known limitations (documented, not hidden):
 //! - MP3 files without a Xing/LAME tag carry encoder delay that cannot be
 //!   trimmed; timestamps may shift by up to ~50 ms for such files.
+//! - AAC (incl. .m4a): Symphonia does not yet trim encoder delay/padding
+//!   for AAC — timestamps may shift by up to ~50 ms. WAV/MP3/FLAC/OGG are
+//!   sample-accurate.
 //! - Decoding currently buffers the whole file in memory: the interleaved
 //!   native-rate decode plus the analysis-rate mono signal (~0.3 GB per hour
 //!   at 22050 Hz; a 2-hour 44.1 kHz stereo file peaks around ~2.8 GB).
@@ -52,7 +55,7 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.5.0";
+pub const SCHEMA_VERSION: &str = "0.6.0";
 
 /// Default locations of the ONNX model artifacts (regenerate with
 /// `scripts/export_model.py`; see models/manifest.json for provenance).
@@ -153,7 +156,7 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
         options.mel_model.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_MEL_MODEL));
     let neural_available = beat_model.is_file() && mel_model.is_file();
 
-    let (tempo, beats, downbeats) = match options.engine {
+    let (mut tempo, beats, downbeats) = match options.engine {
         Engine::Neural if !neural_available => {
             return Err(BeatlocError::Inference(format!(
                 "neural engine selected but model files are missing (expected {} and {}; \
@@ -200,6 +203,7 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
                         engine: dsp::beat::ENGINE.to_string(),
                         bpm: track.bpm,
                         periodicity: Some(track.periodicity),
+                        local: None,
                     }),
                     timeline::Beats {
                         engine: dsp::beat::ENGINE.to_string(),
@@ -231,6 +235,15 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             (tempo, beats, None)
         }
     };
+
+    // Local tempo track, derived from the final beat list (engine-agnostic).
+    if let Some(t) = tempo.as_mut() {
+        let times: Vec<f64> = beats.items.iter().map(|b| b.time).collect();
+        let points = dsp::local_tempo_points(&times, 4);
+        if !points.is_empty() {
+            t.local = Some(points);
+        }
+    }
 
     let curves = options.include_curves.then(|| timeline::Curves {
         energy: timeline::Curve {
@@ -287,7 +300,7 @@ pub fn find_audio_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
                 }
             } else if matches!(
                 path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
-                Some("wav" | "mp3" | "flac")
+                Some("wav" | "mp3" | "flac" | "ogg" | "oga" | "m4a" | "aac")
             ) {
                 out.push(path);
             }
@@ -326,5 +339,6 @@ fn neural_tempo(beats: &[f64], engine: &str) -> Option<timeline::Tempo> {
         engine: format!("{engine} (median-ibi)"),
         bpm: 60.0 / median,
         periodicity: None,
+        local: None,
     })
 }

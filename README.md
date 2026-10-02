@@ -40,25 +40,28 @@ beatloc track.mp3 --model models/beat_this_final0.onnx --json   # full-accuracy 
 beatloc ./music/ --output-dir timelines/ -r    # batch: one JSON per file, recursive
 ```
 
-Input: WAV, MP3, FLAC (pure-Rust decoding via
-[Symphonia](https://github.com/pdeljanov/Symphonia)).
+Input: WAV, MP3, FLAC, OGG/Vorbis, AAC/M4A (pure-Rust decoding via
+[Symphonia](https://github.com/pdeljanov/Symphonia)). AAC note: encoder
+delay is not yet trimmed by the decoder — timestamps may be off by up to
+~50 ms for AAC files; the other formats are sample-accurate.
 
 Contract for machine consumers:
 
 - stdout carries **only** the JSON result; diagnostics go to stderr.
 - Exit codes: `0` success, `1` analysis/IO error, `2` usage error.
 
-## Output (schema v0.4.0)
+## Output (schema v0.6.0)
 
 ```jsonc
 {
-  "format":    { "name": "beatloc-timeline", "version": "0.4.0" },
+  "format":    { "name": "beatloc-timeline", "version": "0.6.0" },
   "generator": { "name": "beatloc", "version": "0.1.0" },
   "source":    { "duration_seconds": 9.5, "sample_rate": 44100, "channels": 2, "codec": "mp3" },
   "analysis":  { "sample_rate": 22050, "window_size": 1024, "hop_size": 441,
                  "window": "hann (periodic)",
                  "timestamps": "seconds from decoded stream start (gapless-trimmed) to frame centre" },
-  "tempo":     { "engine": "beat-this-small0 (median-ibi)", "bpm": 120.0 },
+  "tempo":     { "engine": "beat-this-small0 (median-ibi)", "bpm": 120.0,
+                 "local": [ { "time": 1.25, "bpm": 119.8 } ] },
   "beats":     { "engine": "beat-this-small0",
                  "items": [ { "time": 1.02, "index": 0, "bar": 1, "bar_position": 1 } ] },
   "downbeats": { "engine": "beat-this-small0", "items": [ { "time": 1.02, "bar": 1 } ] },
@@ -73,6 +76,8 @@ Contract for machine consumers:
 
 - `tempo` is **absent** when no periodicity could be established (e.g.
   silence) — unknown is represented by omission, never a sentinel value.
+  `tempo.local` is a per-interval tempo curve (median inter-beat interval
+  over ±4 beats at each interval midpoint); absent with fewer than 2 beats.
 - `beats.items[].index` is a 0-based counter. `bar` is 1-based from the
   first detected downbeat; `bar_position` counts from 1 within the bar
   (downbeat = 1). Neither is a time-signature claim; both are absent when

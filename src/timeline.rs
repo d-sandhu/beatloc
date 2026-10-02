@@ -65,6 +65,20 @@ pub struct Tempo {
     /// Present only for engines where this diagnostic exists (DSP baseline).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub periodicity: Option<f32>,
+    /// Local tempo track: one point per beat interval (median IBI over ±4
+    /// intervals, timestamped at the interval midpoint). Absent when there
+    /// are fewer than 2 beats.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local: Option<Vec<LocalTempoPoint>>,
+}
+
+/// One local tempo sample.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct LocalTempoPoint {
+    /// Seconds from decoded stream start (midpoint of the beat interval).
+    pub time: f64,
+    /// Local tempo in BPM (median inter-beat interval over ±4 intervals).
+    pub bpm: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
