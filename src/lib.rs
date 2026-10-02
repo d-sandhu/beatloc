@@ -23,9 +23,11 @@
 //! Known limitations (documented, not hidden):
 //! - MP3 files without a Xing/LAME tag carry encoder delay that cannot be
 //!   trimmed; timestamps may shift by up to ~50 ms for such files.
-//! - Decoding currently buffers the whole file in memory (~13 MB per hour of
-//!   mono audio at the analysis rate). Streaming decode is planned before the
-//!   neural engine lands.
+//! - Decoding currently buffers the whole file in memory: the interleaved
+//!   native-rate decode plus the analysis-rate mono signal (~0.3 GB per hour
+//!   at 22050 Hz; a 2-hour 44.1 kHz stereo file peaks around ~2.8 GB).
+//!   Fine for songs and ad spots; streaming decode is planned if long mixes
+//!   become a real use case.
 
 use std::path::{Path, PathBuf};
 
@@ -50,7 +52,7 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.3.0";
+pub const SCHEMA_VERSION: &str = "0.4.0";
 
 /// Default locations of the ONNX model artifacts (regenerate with
 /// `scripts/export_model.py`; see models/manifest.json for provenance).
@@ -105,6 +107,38 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
 
     let flux = dsp::onset::onset_strength(&mono, STFT_WINDOW, STFT_HOP);
     let onsets = dsp::onset::pick_onsets(&flux, ANALYSIS_SAMPLE_RATE, STFT_WINDOW, STFT_HOP);
+    let energy = dsp::energy::frame_rms_dbfs(&mono, STFT_WINDOW, STFT_HOP);
+
+    // Sections: spans between consecutive transition boundaries (feature-
+    // contrast novelty over the shared frame grid; engine-independent).
+    let hop_seconds = STFT_HOP as f64 / ANALYSIS_SAMPLE_RATE as f64;
+    let transitions = dsp::sections::detect_transitions(&energy, &flux, hop_seconds);
+    let mut section_items = Vec::with_capacity(transitions.len() + 1);
+    let mut start = 0.0f64;
+    for (i, t) in transitions.iter().enumerate() {
+        let boundary =
+            dsp::frame_center_seconds(t.frame, STFT_WINDOW, STFT_HOP, ANALYSIS_SAMPLE_RATE);
+        // The strength on a section belongs to the boundary that STARTS it.
+        section_items.push(timeline::Section {
+            index: i as u32,
+            start,
+            end: boundary,
+            transition_strength: if i == 0 { None } else { Some(transitions[i - 1].strength) },
+        });
+        start = boundary;
+    }
+    let n_transitions = transitions.len();
+    section_items.push(timeline::Section {
+        index: n_transitions as u32,
+        start,
+        end: duration_seconds,
+        transition_strength: if n_transitions == 0 {
+            None
+        } else {
+            Some(transitions[n_transitions - 1].strength)
+        },
+    });
+    let sections = timeline::Sections { engine: "dsp-novelty-v1", items: section_items };
 
     // V0.2/V0.3: beat engine. DSP is the baseline; neural runs when selected
     // and its model files are available.
@@ -179,13 +213,13 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
     let curves = options.include_curves.then(|| timeline::Curves {
         energy: timeline::Curve {
             start_seconds: dsp::frame_center_seconds(0, STFT_WINDOW, STFT_HOP, ANALYSIS_SAMPLE_RATE),
-            hop_seconds: STFT_HOP as f64 / ANALYSIS_SAMPLE_RATE as f64,
+            hop_seconds: hop_seconds,
             units: timeline::Units::Dbfs,
-            values: dsp::energy::frame_rms_dbfs(&mono, STFT_WINDOW, STFT_HOP),
+            values: energy,
         },
         onset_strength: timeline::Curve {
             start_seconds: dsp::frame_center_seconds(0, STFT_WINDOW, STFT_HOP, ANALYSIS_SAMPLE_RATE),
-            hop_seconds: STFT_HOP as f64 / ANALYSIS_SAMPLE_RATE as f64,
+            hop_seconds,
             units: timeline::Units::SpectralFlux,
             values: flux,
         },
@@ -210,6 +244,7 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
         tempo,
         beats,
         downbeats,
+        sections,
         onsets,
         curves,
     })

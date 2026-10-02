@@ -177,16 +177,23 @@ def main() -> None:
     print(f"model: outputs {[o.shape for o in outputs]}, max|diff| beat {beat_diff:.3e}, downbeat {down_diff:.3e}")
     assert beat_diff < 1e-3 and down_diff < 1e-3, "model export diverged"
 
-    manifest = {
-        "checkpoint": checkpoint,
-        "opset": OPSET,
-        "source": "CPJKU/beat_this (MIT), exported by scripts/export_model.py",
-        "files": {
-            mel_path.name: {"sha256": sha256(mel_path), "bytes": mel_path.stat().st_size},
-            model_path.name: {"sha256": sha256(model_path), "bytes": model_path.stat().st_size},
-        },
-    }
     manifest_path = MODELS / "manifest.json"
+    # Merge into any existing manifest so all exported models stay tracked.
+    manifest = (
+        json.loads(manifest_path.read_text())
+        if manifest_path.exists()
+        else {"opset": OPSET, "source": "CPJKU/beat_this (MIT), exported by scripts/export_model.py", "files": {}}
+    )
+    manifest["opset"] = OPSET
+    manifest.setdefault("files", {})[model_path.name] = {
+        "sha256": sha256(model_path),
+        "bytes": model_path.stat().st_size,
+        "checkpoint": checkpoint,
+    }
+    manifest["files"][mel_path.name] = {
+        "sha256": sha256(mel_path),
+        "bytes": mel_path.stat().st_size,
+    }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"manifest -> {manifest_path}")
 

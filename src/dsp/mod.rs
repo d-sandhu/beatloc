@@ -6,6 +6,7 @@ pub mod beat;
 pub mod energy;
 pub mod onset;
 pub mod resample;
+pub mod sections;
 
 /// Seconds from signal start to the centre of analysis frame `frame`.
 ///

@@ -1,0 +1,26 @@
+# Development CI: build + test on the platforms we claim to support.
+# Not release automation — no artifacts are published here.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Release mode keeps the neural-parity test fast; it skips cleanly
+      # because model artifacts are not in the repo (models/ is generated).
+      - name: build
+        run: cargo build --release --all-targets
+      - name: test
+        run: cargo test --release

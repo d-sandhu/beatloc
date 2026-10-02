@@ -36,6 +36,8 @@ fn main() {
     let mut trim = 5.0f64;
     let mut limit = usize::MAX;
     let mut engine = Engine::Auto;
+    let mut model: Option<PathBuf> = None;
+    let mut mel_model: Option<PathBuf> = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--trim" => trim = args.next().and_then(|v| v.parse().ok()).unwrap_or(trim),
@@ -47,6 +49,8 @@ fn main() {
                     Some("auto") | _ => Engine::Auto,
                 }
             }
+            "--model" => model = args.next().map(PathBuf::from),
+            "--mel-model" => mel_model = args.next().map(PathBuf::from),
             other => {
                 eprintln!("unknown argument: {other}");
                 std::process::exit(2);
@@ -78,7 +82,12 @@ fn main() {
         let started = Instant::now();
         let timeline = match analyze_file(
             &audio,
-            AnalysisOptions { engine, ..Default::default() },
+            AnalysisOptions {
+                engine,
+                beat_model: model.clone(),
+                mel_model: mel_model.clone(),
+                ..Default::default()
+            },
         ) {
             Ok(t) => t,
             Err(e) => {

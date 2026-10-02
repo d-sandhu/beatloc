@@ -46,6 +46,9 @@ pub struct Timeline {
     /// (the DSP baseline does not). Absent = unsupported or none detected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub downbeats: Option<Downbeats>,
+    /// Section boundaries from feature-contrast novelty. Detects THAT a
+    /// transition happens, not WHAT the section is — no semantic labels.
+    pub sections: Sections,
     pub onsets: Vec<Onset>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub curves: Option<Curves>,
@@ -106,6 +109,28 @@ pub struct Downbeat {
     pub time: f64,
     /// 1-based bar number starting at the first detected downbeat.
     pub bar: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Sections {
+    /// Detector provenance.
+    pub engine: &'static str,
+    pub items: Vec<Section>,
+}
+
+/// One section: the span between two transitions (or file start/end).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Section {
+    pub index: u32,
+    /// Seconds from decoded stream start.
+    pub start: f64,
+    pub end: f64,
+    /// Strength of the transition that STARTS this section: novelty peak
+    /// height relative to the track's maximum, in [0, 1]. Uncalibrated,
+    /// meaningful only for ranking within the same track. Absent on the
+    /// first section (no preceding boundary).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_strength: Option<f32>,
 }
 
 /// Assign bar numbers and bar positions to beats, given downbeats that have
