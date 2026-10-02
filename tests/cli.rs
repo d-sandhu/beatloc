@@ -12,12 +12,27 @@ fn beatloc() -> Command {
 #[test]
 fn stdout_is_pure_json_and_stderr_is_silent() {
     let wav = common::temp_wav_path("cli-stdout.wav");
-    common::write_wav_i16(&wav, 22_050, 1, &common::click_track(22_050, &[0.5, 1.0], 1.5));
+    common::write_wav_i16(
+        &wav,
+        22_050,
+        1,
+        &common::click_track(22_050, &[0.5, 1.0], 1.5),
+    );
 
-    let out = beatloc().arg(&wav).arg("--json").arg("--engine").arg("dsp").output().unwrap();
+    let out = beatloc()
+        .arg(&wav)
+        .arg("--json")
+        .arg("--engine")
+        .arg("dsp")
+        .output()
+        .unwrap();
 
     assert!(out.status.success());
-    assert!(out.stderr.is_empty(), "stderr not empty: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.stderr.is_empty(),
+        "stderr not empty: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is not JSON");
     assert_eq!(json["format"]["name"], "beatloc-timeline");
     assert_eq!(json["format"]["version"], beatloc::SCHEMA_VERSION);
@@ -32,16 +47,37 @@ fn output_file_never_overwrites_without_force() {
     let json_path = wav.with_extension("json");
     common::write_wav_i16(&wav, 22_050, 1, &common::click_track(22_050, &[0.5], 1.0));
 
-    let first = beatloc().arg(&wav).arg("--engine").arg("dsp").arg("--output").arg(&json_path).output().unwrap();
+    let first = beatloc()
+        .arg(&wav)
+        .arg("--engine")
+        .arg("dsp")
+        .arg("--output")
+        .arg(&json_path)
+        .output()
+        .unwrap();
     assert!(first.status.success());
     assert!(json_path.exists());
 
-    let second = beatloc().arg(&wav).arg("--engine").arg("dsp").arg("--output").arg(&json_path).output().unwrap();
+    let second = beatloc()
+        .arg(&wav)
+        .arg("--engine")
+        .arg("dsp")
+        .arg("--output")
+        .arg(&json_path)
+        .output()
+        .unwrap();
     assert_eq!(second.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&second.stderr).contains("already exists"));
 
-    let forced =
-        beatloc().arg(&wav).arg("--engine").arg("dsp").arg("--output").arg(&json_path).arg("--force").output().unwrap();
+    let forced = beatloc()
+        .arg(&wav)
+        .arg("--engine")
+        .arg("dsp")
+        .arg("--output")
+        .arg(&json_path)
+        .arg("--force")
+        .output()
+        .unwrap();
     assert!(forced.status.success());
 
     std::fs::remove_file(&wav).ok();
@@ -50,7 +86,10 @@ fn output_file_never_overwrites_without_force() {
 
 #[test]
 fn missing_input_is_a_clean_error() {
-    let out = beatloc().arg("/nonexistent/definitely-not-here.wav").output().unwrap();
+    let out = beatloc()
+        .arg("/nonexistent/definitely-not-here.wav")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(out.stdout.is_empty());
     assert!(!out.stderr.is_empty());
@@ -82,7 +121,11 @@ fn batch_mode_writes_one_json_per_file_and_requires_output_dir() {
         .arg("dsp")
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     for name in ["a.json", "b.json"] {
         let json: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(out_dir.join(name)).expect("per-file JSON written"),

@@ -115,7 +115,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.output {
         Some(path) => {
             if path.exists() && !cli.force {
-                anyhow::bail!("{} already exists (pass --force to overwrite)", path.display());
+                anyhow::bail!(
+                    "{} already exists (pass --force to overwrite)",
+                    path.display()
+                );
             }
             std::fs::write(&path, &json)?;
             eprintln!("wrote {}", path.display());
@@ -146,7 +149,9 @@ fn run_batch(cli: &Cli) -> anyhow::Result<()> {
     let total = files.len();
     let mut failures = 0usize;
     for (i, file) in files.iter().enumerate() {
-        let out_path = out_dir.join(file.file_stem().unwrap_or_default()).with_extension("json");
+        let out_path = out_dir
+            .join(file.file_stem().unwrap_or_default())
+            .with_extension("json");
         let result = (|| -> anyhow::Result<()> {
             let timeline = beatloc::analyze_file(
                 file,
@@ -176,9 +181,13 @@ fn run_batch(cli: &Cli) -> anyhow::Result<()> {
 }
 
 fn models_available(cli: &Cli) -> bool {
-    let beat =
-        cli.model.clone().unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_BEAT_MODEL));
-    let mel =
-        cli.mel_model.clone().unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_MEL_MODEL));
+    let beat = cli
+        .model
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_BEAT_MODEL));
+    let mel = cli
+        .mel_model
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_MEL_MODEL));
     Path::new(&beat).is_file() && Path::new(&mel).is_file()
 }

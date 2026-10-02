@@ -58,7 +58,11 @@ pub fn track_beats(flux: &[f32], fps: f64) -> Option<BeatTrack> {
     if frames.is_empty() {
         return None;
     }
-    Some(BeatTrack { bpm: 60.0 * fps / period, frames, periodicity })
+    Some(BeatTrack {
+        bpm: 60.0 * fps / period,
+        frames,
+        periodicity,
+    })
 }
 
 /// Global period in frames via prior-weighted autocorrelation.
@@ -77,7 +81,12 @@ fn estimate_period(flux: &[f32], fps: f64) -> Option<(f64, f32)> {
     if r0 <= 0.0 {
         return None; // constant envelope (e.g. digital silence)
     }
-    let acf = |lag: usize| (0..n - lag).map(|i| centered[i] * centered[i + lag]).sum::<f64>() / r0;
+    let acf = |lag: usize| {
+        (0..n - lag)
+            .map(|i| centered[i] * centered[i + lag])
+            .sum::<f64>()
+            / r0
+    };
 
     let mut best_lag = min_lag;
     let mut best_score = f64::NEG_INFINITY;

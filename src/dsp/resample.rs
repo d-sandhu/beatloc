@@ -16,12 +16,17 @@ pub fn to_analysis_rate(input: &[f32], from_rate: u32) -> Result<Vec<f32>, Beatl
         return Ok(input.to_vec());
     }
 
-    let mut resampler =
-        Fft::<f32>::new(from_rate as usize, ANALYSIS_SAMPLE_RATE as usize, 1024, 1, FixedSync::Input)
-            .map_err(|e| BeatlocError::Resample(e.to_string()))?;
+    let mut resampler = Fft::<f32>::new(
+        from_rate as usize,
+        ANALYSIS_SAMPLE_RATE as usize,
+        1024,
+        1,
+        FixedSync::Input,
+    )
+    .map_err(|e| BeatlocError::Resample(e.to_string()))?;
 
-    let adapter =
-        InterleavedSlice::new(input, 1, input.len()).map_err(|e| BeatlocError::Resample(e.to_string()))?;
+    let adapter = InterleavedSlice::new(input, 1, input.len())
+        .map_err(|e| BeatlocError::Resample(e.to_string()))?;
 
     let output = resampler
         .process_all(&adapter, input.len(), None)

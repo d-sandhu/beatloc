@@ -137,7 +137,11 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             index: i as u32,
             start,
             end: boundary,
-            transition_strength: if i == 0 { None } else { Some(transitions[i - 1].strength) },
+            transition_strength: if i == 0 {
+                None
+            } else {
+                Some(transitions[i - 1].strength)
+            },
         });
         start = boundary;
     }
@@ -152,7 +156,10 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             Some(transitions[n_transitions - 1].strength)
         },
     });
-    let sections = timeline::Sections { engine: "dsp-novelty-v2", items: section_items };
+    let sections = timeline::Sections {
+        engine: "dsp-novelty-v2",
+        items: section_items,
+    };
 
     // V0.2/V0.3: beat engine. DSP is the baseline; neural runs when selected
     // and its model files are available.
@@ -161,8 +168,10 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
         .beat_model
         .clone()
         .unwrap_or_else(|| PathBuf::from(DEFAULT_BEAT_MODEL));
-    let mel_model =
-        options.mel_model.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_MEL_MODEL));
+    let mel_model = options
+        .mel_model
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_MEL_MODEL));
     let neural_available = beat_model.is_file() && mel_model.is_file();
 
     let (mut tempo, beats, downbeats) = match options.engine {
@@ -178,8 +187,7 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             let engine = inference::NeuralEngine::load(&mel_model, &beat_model)?;
             let out = engine.predict(&mono)?;
             let name = model_engine_name(&beat_model);
-            let (mut items, mut downbeat_items) =
-                timeline::build_bars(&out.beats, &out.downbeats);
+            let (mut items, mut downbeat_items) = timeline::build_bars(&out.beats, &out.downbeats);
             for (item, &score) in items.iter_mut().zip(&out.beat_scores) {
                 item.score = Some(score);
             }
@@ -187,7 +195,11 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
                 item.score = Some(score);
             }
             let mean_score = |s: &[f32]| {
-                if s.is_empty() { None } else { Some(s.iter().sum::<f32>() / s.len() as f32) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.iter().sum::<f32>() / s.len() as f32)
+                }
             };
             let tempo = neural_tempo(&out.beats, &name);
             (
@@ -238,7 +250,11 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
                 ),
                 None => (
                     None,
-                    timeline::Beats { engine: dsp::beat::ENGINE.to_string(), mean_score: None, items: Vec::new() },
+                    timeline::Beats {
+                        engine: dsp::beat::ENGINE.to_string(),
+                        mean_score: None,
+                        items: Vec::new(),
+                    },
                 ),
             };
             (tempo, beats, None)
@@ -256,13 +272,23 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
 
     let curves = options.include_curves.then(|| timeline::Curves {
         energy: timeline::Curve {
-            start_seconds: dsp::frame_center_seconds(0, STFT_WINDOW, STFT_HOP, ANALYSIS_SAMPLE_RATE),
+            start_seconds: dsp::frame_center_seconds(
+                0,
+                STFT_WINDOW,
+                STFT_HOP,
+                ANALYSIS_SAMPLE_RATE,
+            ),
             hop_seconds,
             units: timeline::Units::Dbfs,
             values: energy,
         },
         onset_strength: timeline::Curve {
-            start_seconds: dsp::frame_center_seconds(0, STFT_WINDOW, STFT_HOP, ANALYSIS_SAMPLE_RATE),
+            start_seconds: dsp::frame_center_seconds(
+                0,
+                STFT_WINDOW,
+                STFT_HOP,
+                ANALYSIS_SAMPLE_RATE,
+            ),
             hop_seconds,
             units: timeline::Units::SpectralFlux,
             values: flux,
@@ -270,8 +296,14 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
     });
 
     Ok(Timeline {
-        format: timeline::FormatInfo { name: SCHEMA_NAME, version: SCHEMA_VERSION },
-        generator: timeline::GeneratorInfo { name: "beatloc", version: env!("CARGO_PKG_VERSION") },
+        format: timeline::FormatInfo {
+            name: SCHEMA_NAME,
+            version: SCHEMA_VERSION,
+        },
+        generator: timeline::GeneratorInfo {
+            name: "beatloc",
+            version: env!("CARGO_PKG_VERSION"),
+        },
         source: timeline::SourceInfo {
             duration_seconds,
             sample_rate: decoded.sample_rate,
@@ -300,7 +332,9 @@ pub fn find_audio_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -308,7 +342,10 @@ pub fn find_audio_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
                     stack.push(path);
                 }
             } else if matches!(
-                path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
                 Some("wav" | "mp3" | "flac" | "ogg" | "oga" | "m4a" | "aac")
             ) {
                 out.push(path);

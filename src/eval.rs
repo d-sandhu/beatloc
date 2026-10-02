@@ -57,7 +57,11 @@ fn match_events(reference: &[f64], estimate: &[f64], tolerance: f64) -> Vec<(f64
 /// the score is 0.0.
 pub fn f_measure(reference: &[f64], estimate: &[f64], tolerance: f64) -> FMeasure {
     if reference.is_empty() || estimate.is_empty() {
-        return FMeasure { precision: 0.0, recall: 0.0, f: 0.0 };
+        return FMeasure {
+            precision: 0.0,
+            recall: 0.0,
+            f: 0.0,
+        };
     }
     let matches = match_events(reference, estimate, tolerance).len() as f64;
     let precision = matches / estimate.len() as f64;
@@ -67,7 +71,11 @@ pub fn f_measure(reference: &[f64], estimate: &[f64], tolerance: f64) -> FMeasur
     } else {
         0.0
     };
-    FMeasure { precision, recall, f }
+    FMeasure {
+        precision,
+        recall,
+        f,
+    }
 }
 
 /// Signed offsets (estimate − reference) of matched events, in seconds.
@@ -75,7 +83,10 @@ pub fn f_measure(reference: &[f64], estimate: &[f64], tolerance: f64) -> FMeasur
 /// F-measure alone cannot see — and which matters for frame-accurate video
 /// work. Unmatched events are excluded.
 pub fn matched_offsets(reference: &[f64], estimate: &[f64], tolerance: f64) -> Vec<f64> {
-    match_events(reference, estimate, tolerance).iter().map(|(r, e)| e - r).collect()
+    match_events(reference, estimate, tolerance)
+        .iter()
+        .map(|(r, e)| e - r)
+        .collect()
 }
 
 /// Continuity metrics (Davies, Degara & Plumbley 2009), ported from
@@ -152,9 +163,17 @@ fn continuity_once(reference: &[f64], est: &[f64], phase_thr: f64, period_thr: f
             } else {
                 (min_diff / ref_interval).abs()
             };
-            let est_interval = if m + 1 < est.len() { est[m + 1] - est[m] } else { est[m] - est[m - 1] };
+            let est_interval = if m + 1 < est.len() {
+                est[m + 1] - est[m]
+            } else {
+                est[m] - est[m - 1]
+            };
             let period = if ref_interval == 0.0 {
-                if est_interval == 0.0 { 0.0 } else { f64::INFINITY }
+                if est_interval == 0.0 {
+                    0.0
+                } else {
+                    f64::INFINITY
+                }
             } else {
                 (1.0 - est_interval / ref_interval).abs()
             };
@@ -192,7 +211,12 @@ fn continuity_once(reference: &[f64], est: &[f64], phase_thr: f64, period_thr: f
 
 pub fn continuity(reference: &[f64], estimate: &[f64]) -> Continuity {
     if reference.len() <= 1 || estimate.len() <= 1 {
-        return Continuity { cmlc: 0.0, cmlt: 0.0, amlc: 0.0, amlt: 0.0 };
+        return Continuity {
+            cmlc: 0.0,
+            cmlt: 0.0,
+            amlc: 0.0,
+            amlt: 0.0,
+        };
     }
     let variations = beat_variations(reference);
     let mut first = (0.0, 0.0);
@@ -206,7 +230,12 @@ pub fn continuity(reference: &[f64], estimate: &[f64]) -> Continuity {
         amlc = amlc.max(c);
         amlt = amlt.max(t);
     }
-    Continuity { cmlc: first.0, cmlt: first.1, amlc, amlt }
+    Continuity {
+        cmlc: first.0,
+        cmlt: first.1,
+        amlc,
+        amlt,
+    }
 }
 
 #[cfg(test)]
@@ -263,7 +292,15 @@ mod tests {
     fn continuity_perfect_is_one() {
         let r = [1.0, 1.5, 2.0, 2.5, 3.0];
         let c = continuity(&r, &r);
-        assert_eq!(c, Continuity { cmlc: 1.0, cmlt: 1.0, amlc: 1.0, amlt: 1.0 });
+        assert_eq!(
+            c,
+            Continuity {
+                cmlc: 1.0,
+                cmlt: 1.0,
+                amlc: 1.0,
+                amlt: 1.0
+            }
+        );
     }
 
     /// Double-tempo estimate: wrong period at the correct metric level (CMLt

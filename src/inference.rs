@@ -74,7 +74,14 @@ impl NeuralEngine {
         let mel_out = find(&mel, "spect")?;
         let model_in = find(&model, "spect")?;
         let model_out = [find(&model, "beat")?, find(&model, "downbeat")?];
-        Ok(NeuralEngine { mel, mel_in, mel_out, model, model_in, model_out })
+        Ok(NeuralEngine {
+            mel,
+            mel_in,
+            mel_out,
+            model,
+            model_in,
+            model_out,
+        })
     }
 
     /// Full pipeline: mono 22050 Hz samples → logits → beat/downbeat times.
@@ -108,7 +115,9 @@ impl NeuralEngine {
             // Keep-first: earlier chunks win in overlaps. The written region
             // of this chunk is [start + BORDER, start + CHUNK_SIZE - BORDER).
             let region_start = (start + BORDER).max(0) as usize;
-            let region_end = (start + CHUNK_SIZE as i64 - BORDER).min(frames as i64).max(0) as usize;
+            let region_end = (start + CHUNK_SIZE as i64 - BORDER)
+                .min(frames as i64)
+                .max(0) as usize;
             #[allow(clippy::needless_range_loop)]
             for f in region_start..region_end {
                 if !written[f] {
@@ -120,7 +129,10 @@ impl NeuralEngine {
                 }
             }
         }
-        debug_assert!(written.iter().all(|&w| w), "chunking must cover every frame");
+        debug_assert!(
+            written.iter().all(|&w| w),
+            "chunking must cover every frame"
+        );
         Ok((beat, downbeat))
     }
 
@@ -174,9 +186,9 @@ impl NeuralEngine {
         let beat_t = beat_v
             .into_tensor::<f32>()
             .ok_or_else(|| BeatlocError::Inference("beat output is not an f32 tensor".into()))?;
-        let downbeat_t = downbeat_v
-            .into_tensor::<f32>()
-            .ok_or_else(|| BeatlocError::Inference("downbeat output is not an f32 tensor".into()))?;
+        let downbeat_t = downbeat_v.into_tensor::<f32>().ok_or_else(|| {
+            BeatlocError::Inference("downbeat output is not an f32 tensor".into())
+        })?;
 
         // Port of aggregate_prediction's border trim: predictions [BORDER..len-BORDER).
         let beat = beat_t.to_vec();
@@ -223,11 +235,7 @@ pub fn postprocess(logits: &[f32]) -> (Vec<f64>, Vec<f32>) {
 
 /// Snap downbeat times to the nearest beat (reference behavior); when several
 /// downbeats collapse onto the same beat, keep the highest score.
-pub fn snap_downbeats(
-    downbeats: &mut Vec<f64>,
-    downbeat_scores: &mut Vec<f32>,
-    beats: &[f64],
-) {
+pub fn snap_downbeats(downbeats: &mut Vec<f64>, downbeat_scores: &mut Vec<f32>, beats: &[f64]) {
     if beats.is_empty() {
         return;
     }
@@ -238,8 +246,11 @@ pub fn snap_downbeats(
             .copied()
             .unwrap_or(*d);
     }
-    let mut pairs: Vec<(f64, f32)> =
-        downbeats.iter().copied().zip(downbeat_scores.iter().copied()).collect();
+    let mut pairs: Vec<(f64, f32)> = downbeats
+        .iter()
+        .copied()
+        .zip(downbeat_scores.iter().copied())
+        .collect();
     pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
     pairs.dedup_by(|next, prev| {
         if next.0 == prev.0 {
@@ -273,15 +284,26 @@ fn pick_peaks(logits: &[f32]) -> Vec<Peak> {
     for i in 0..n {
         let lo = i.saturating_sub(3);
         let hi = (i + 3).min(n - 1);
-        let window_max = logits[lo..=hi].iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let window_max = logits[lo..=hi]
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
         if logits[i] > 0.0 && logits[i] == window_max {
-            raw.push(Peak { frame: i as f64, logit: logits[i] });
+            raw.push(Peak {
+                frame: i as f64,
+                logit: logits[i],
+            });
         }
     }
     // Merge groups of adjacent peaks: running mean of frames, max logit.
     let mut merged: Vec<Peak> = Vec::new();
-    let Some(first) = raw.first() else { return merged };
-    let mut cur = Peak { frame: first.frame, logit: first.logit };
+    let Some(first) = raw.first() else {
+        return merged;
+    };
+    let mut cur = Peak {
+        frame: first.frame,
+        logit: first.logit,
+    };
     let mut count = 1.0;
     for p in &raw[1..] {
         if p.frame - cur.frame <= 1.0 {
@@ -290,7 +312,10 @@ fn pick_peaks(logits: &[f32]) -> Vec<Peak> {
             cur.logit = cur.logit.max(p.logit);
         } else {
             merged.push(cur);
-            cur = Peak { frame: p.frame, logit: p.logit };
+            cur = Peak {
+                frame: p.frame,
+                logit: p.logit,
+            };
             count = 1.0;
         }
     }
@@ -325,13 +350,15 @@ mod tests {
             let mut covered = vec![false; frames];
             for &s in &starts {
                 let lo = (s + BORDER).max(0) as usize;
-                let hi =
-                    (s + CHUNK_SIZE as i64 - BORDER).clamp(0, frames as i64) as usize;
+                let hi = (s + CHUNK_SIZE as i64 - BORDER).clamp(0, frames as i64) as usize;
                 for c in covered.iter_mut().take(hi).skip(lo) {
                     *c = true;
                 }
             }
-            assert!(covered.iter().all(|&c| c), "frames {frames}: gaps in coverage");
+            assert!(
+                covered.iter().all(|&c| c),
+                "frames {frames}: gaps in coverage"
+            );
         }
     }
 

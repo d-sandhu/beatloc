@@ -29,7 +29,12 @@ fn golden() -> Option<serde_json::Value> {
 }
 
 fn golden_f64s(golden: &serde_json::Value, key: &str) -> Vec<f64> {
-    golden[key].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect()
+    golden[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect()
 }
 
 #[test]
@@ -43,14 +48,16 @@ fn rust_pipeline_matches_python_reference() {
     let golden = golden().expect("golden fixture readable");
 
     // Same path as production: decode -> (no-op resample at 22050) -> ONNX.
-    let decoded =
-        decode::decode_file(Path::new("tests/fixtures/drum_loop_120bpm.wav")).unwrap();
+    let decoded = decode::decode_file(Path::new("tests/fixtures/drum_loop_120bpm.wav")).unwrap();
     let mono = dsp::resample::to_analysis_rate(&decoded.samples, decoded.sample_rate).unwrap();
     let engine = NeuralEngine::load(mel_path, model_path).unwrap();
     let out = engine.predict(&mono).unwrap();
 
     // 1. Frame count must match the reference pipeline exactly.
-    assert_eq!(out.beat_logits.len(), golden["frames"].as_u64().unwrap() as usize);
+    assert_eq!(
+        out.beat_logits.len(),
+        golden["frames"].as_u64().unwrap() as usize
+    );
 
     // 2. Logit parity (the strong check — subsumes mel and model graphs).
     let g_beat = golden_f64s(&golden, "beat_logits");
@@ -64,13 +71,25 @@ fn rust_pipeline_matches_python_reference() {
     let beat_diff = max_diff(&out.beat_logits, &g_beat);
     let down_diff = max_diff(&out.downbeat_logits, &g_down);
     assert!(beat_diff < 2e-3, "beat logits max|diff| {beat_diff:.2e}");
-    assert!(down_diff < 2e-3, "downbeat logits max|diff| {down_diff:.2e}");
+    assert!(
+        down_diff < 2e-3,
+        "downbeat logits max|diff| {down_diff:.2e}"
+    );
 
     // 3. Final times: count and per-event alignment within one frame.
     let g_beats = golden_f64s(&golden, "beats");
     let g_downs = golden_f64s(&golden, "downbeats");
-    assert_eq!(out.beats.len(), g_beats.len(), "beat count mismatch: {:?}", out.beats);
-    assert_eq!(out.downbeats.len(), g_downs.len(), "downbeat count mismatch");
+    assert_eq!(
+        out.beats.len(),
+        g_beats.len(),
+        "beat count mismatch: {:?}",
+        out.beats
+    );
+    assert_eq!(
+        out.downbeats.len(),
+        g_downs.len(),
+        "downbeat count mismatch"
+    );
     for (a, b) in out.beats.iter().zip(&g_beats) {
         assert!((a - b).abs() <= 0.0201, "beat {a} vs golden {b}");
     }
@@ -86,18 +105,31 @@ fn auto_engine_uses_neural_when_models_present_and_dsp_otherwise() {
 
     let auto = beatloc::analyze_file(
         wav,
-        beatloc::AnalysisOptions { engine: beatloc::Engine::Auto, ..Default::default() },
+        beatloc::AnalysisOptions {
+            engine: beatloc::Engine::Auto,
+            ..Default::default()
+        },
     )
     .unwrap();
     let dsp = beatloc::analyze_file(
         wav,
-        beatloc::AnalysisOptions { engine: beatloc::Engine::Dsp, ..Default::default() },
+        beatloc::AnalysisOptions {
+            engine: beatloc::Engine::Dsp,
+            ..Default::default()
+        },
     )
     .unwrap();
 
     if models {
-        assert!(auto.beats.engine.starts_with("beat-this"), "{}", auto.beats.engine);
-        assert!(auto.downbeats.is_some(), "neural engine must emit downbeats");
+        assert!(
+            auto.beats.engine.starts_with("beat-this"),
+            "{}",
+            auto.beats.engine
+        );
+        assert!(
+            auto.downbeats.is_some(),
+            "neural engine must emit downbeats"
+        );
     } else {
         eprintln!("skipping neural auto-check: {MODELS_PRESENT}");
         assert_eq!(auto.beats.engine, "dsp-ellis2007");
@@ -118,14 +150,27 @@ fn neural_scores_are_present_and_bounded() {
     }
     let t = beatloc::analyze_file(
         Path::new("tests/fixtures/drum_loop_120bpm.wav"),
-        beatloc::AnalysisOptions { engine: beatloc::Engine::Neural, ..Default::default() },
+        beatloc::AnalysisOptions {
+            engine: beatloc::Engine::Neural,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert!(t.beats.mean_score.is_some());
-    assert!(t.beats.items.iter().all(|b| matches!(b.score, Some(s) if s > 0.5 && s <= 1.0)));
+    assert!(
+        t.beats
+            .items
+            .iter()
+            .all(|b| matches!(b.score, Some(s) if s > 0.5 && s <= 1.0))
+    );
     let downbeats = t.downbeats.unwrap();
     assert!(downbeats.mean_score.is_some());
-    assert!(downbeats.items.iter().all(|d| matches!(d.score, Some(s) if s > 0.5 && s <= 1.0)));
+    assert!(
+        downbeats
+            .items
+            .iter()
+            .all(|d| matches!(d.score, Some(s) if s > 0.5 && s <= 1.0))
+    );
 }
 
 #[test]
@@ -136,7 +181,10 @@ fn bars_are_numbered_from_first_downbeat() {
     }
     let t = beatloc::analyze_file(
         Path::new("tests/fixtures/drum_loop_120bpm.wav"),
-        beatloc::AnalysisOptions { engine: beatloc::Engine::Neural, ..Default::default() },
+        beatloc::AnalysisOptions {
+            engine: beatloc::Engine::Neural,
+            ..Default::default()
+        },
     )
     .unwrap();
     let downbeats = t.downbeats.expect("neural downbeats");
@@ -157,9 +205,16 @@ fn bars_are_numbered_from_first_downbeat() {
         assert_eq!(beat.bar, Some(d.bar));
     }
     // Bar positions count up within each bar.
-    let positions: Vec<u32> =
-        t.beats.items.iter().filter_map(|b| b.bar_position).collect();
+    let positions: Vec<u32> = t
+        .beats
+        .items
+        .iter()
+        .filter_map(|b| b.bar_position)
+        .collect();
     for w in positions.windows(2) {
-        assert!(w[1] == w[0] + 1 || w[1] == 1, "positions must increment or reset: {w:?}");
+        assert!(
+            w[1] == w[0] + 1 || w[1] == 1,
+            "positions must increment or reset: {w:?}"
+        );
     }
 }

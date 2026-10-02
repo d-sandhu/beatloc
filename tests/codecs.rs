@@ -17,7 +17,10 @@ const REFERENCE: &str = "tests/fixtures/clicks_120bpm.wav";
 fn onset_times(path: &str) -> Vec<f64> {
     let t = analyze_file(
         Path::new(path),
-        AnalysisOptions { engine: Engine::Dsp, ..Default::default() },
+        AnalysisOptions {
+            engine: Engine::Dsp,
+            ..Default::default()
+        },
     )
     .unwrap_or_else(|e| panic!("{path}: {e}"));
     t.onsets.iter().map(|o| o.time).collect()
@@ -47,10 +50,13 @@ fn ogg_vorbis_matches_wav() {
 #[test]
 fn aac_m4a_matches_wav_within_encoder_delay() {
     let reference = onset_times(REFERENCE);
-        let m4a = onset_times("tests/fixtures/clicks_120bpm.m4a");
+    let m4a = onset_times("tests/fixtures/clicks_120bpm.m4a");
     assert_eq!(m4a.len(), reference.len(), "onset count differs (m4a)");
     // AAC encoder delay is not trimmed by Symphonia: allow it, assert bounded.
-    assert!(max_offset(&reference, &m4a) < 0.12, "m4a onsets beyond encoder-delay bound");
+    assert!(
+        max_offset(&reference, &m4a) < 0.12,
+        "m4a onsets beyond encoder-delay bound"
+    );
 }
 
 /// Gapless detection (decode-level): only MP3 carries per-file trim state.
@@ -63,10 +69,18 @@ fn encoder_delay_trim_flag() {
     assert_eq!(wav.encoder_delay_trimmed, None, "WAV has no trim concept");
 
     let tagged = decode_file(Path::new("tests/fixtures/clicks_120bpm.mp3")).unwrap();
-    assert_eq!(tagged.encoder_delay_trimmed, Some(true), "tagged MP3 must trim");
+    assert_eq!(
+        tagged.encoder_delay_trimmed,
+        Some(true),
+        "tagged MP3 must trim"
+    );
 
     let untagged = decode_file(Path::new("tests/fixtures/clicks_120bpm_untrimmed.mp3")).unwrap();
-    assert_eq!(untagged.encoder_delay_trimmed, Some(false), "untagged MP3 must be flagged");
+    assert_eq!(
+        untagged.encoder_delay_trimmed,
+        Some(false),
+        "untagged MP3 must be flagged"
+    );
 }
 
 /// The measurement behind the warning: how far do onsets actually drift on
@@ -92,6 +106,12 @@ fn untagged_mp3_shift_is_bounded() {
         .sum::<f64>()
         / untagged.len() as f64;
     eprintln!("measured untagged-MP3 onset shift: {shift_ms:+.1} ms");
-    assert!(shift_ms > 0.0, "expected a positive (late) shift, got {shift_ms:.1} ms");
-    assert!(shift_ms < 60.0, "shift {shift_ms:.1} ms exceeds the documented bound");
+    assert!(
+        shift_ms > 0.0,
+        "expected a positive (late) shift, got {shift_ms:.1} ms"
+    );
+    assert!(
+        shift_ms < 60.0,
+        "shift {shift_ms:.1} ms exceeds the documented bound"
+    );
 }

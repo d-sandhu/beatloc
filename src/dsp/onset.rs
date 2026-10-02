@@ -56,7 +56,10 @@ pub fn pick_onsets(flux: &[f32], sample_rate: u32, window: usize, hop: usize) ->
     for i in 1..flux.len() - 1 {
         let v = flux[i];
         if v > threshold && v > flux[i - 1] && v >= flux[i + 1] {
-            onsets.push(Onset { time: frame_center_seconds(i, window, hop, sample_rate), strength: v });
+            onsets.push(Onset {
+                time: frame_center_seconds(i, window, hop, sample_rate),
+                strength: v,
+            });
         }
     }
     onsets
@@ -86,8 +89,16 @@ mod tests {
         }
         let flux = onset_strength(&samples, 1024, 441);
         let onsets = pick_onsets(&flux, sr as u32, 1024, 441);
-        assert_eq!(onsets.len(), 1, "expected exactly one onset, got {onsets:?}");
-        assert!((onsets[0].time - 1.0).abs() < 0.055, "onset at {}", onsets[0].time);
+        assert_eq!(
+            onsets.len(),
+            1,
+            "expected exactly one onset, got {onsets:?}"
+        );
+        assert!(
+            (onsets[0].time - 1.0).abs() < 0.055,
+            "onset at {}",
+            onsets[0].time
+        );
     }
 
     #[test]

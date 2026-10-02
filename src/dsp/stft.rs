@@ -32,7 +32,8 @@ pub fn stft_magnitudes(samples: &[f32], window: usize, hop: usize) -> Vec<Vec<f3
         {
             *dst = s * w;
         }
-        fft.process(&mut in_buf, &mut out_buf).expect("buffer sizes are exact by construction");
+        fft.process(&mut in_buf, &mut out_buf)
+            .expect("buffer sizes are exact by construction");
         frames.push(out_buf.iter().map(|c| c.norm()).collect());
     }
     frames

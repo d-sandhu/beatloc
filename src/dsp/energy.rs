@@ -17,8 +17,11 @@ pub fn frame_rms_dbfs(samples: &[f32], window: usize, hop: usize) -> Vec<f32> {
         let frame = &samples[start..start + window];
         // Accumulate in f64: window sums of f32 squares lose precision for
         // quiet material otherwise.
-        let mean_square =
-            frame.iter().map(|&x| f64::from(x) * f64::from(x)).sum::<f64>() / window as f64;
+        let mean_square = frame
+            .iter()
+            .map(|&x| f64::from(x) * f64::from(x))
+            .sum::<f64>()
+            / window as f64;
         let dbfs = 10.0 * mean_square.log10();
         out.push(dbfs.max(-120.0) as f32);
     }
@@ -41,7 +44,10 @@ mod tests {
         let curve = frame_rms_dbfs(&samples, window, 441);
         assert!(!curve.is_empty());
         for &db in &curve {
-            assert!((db - -3.0103).abs() < 0.01, "expected ≈ -3.01 dBFS, got {db}");
+            assert!(
+                (db - -3.0103).abs() < 0.01,
+                "expected ≈ -3.01 dBFS, got {db}"
+            );
         }
     }
 

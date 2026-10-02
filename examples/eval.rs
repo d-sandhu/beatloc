@@ -33,7 +33,9 @@ use beatloc::{AnalysisOptions, Engine, analyze_file};
 fn main() {
     let mut args = std::env::args().skip(1);
     let (Some(audio_dir), Some(ann_dir)) = (args.next(), args.next()) else {
-        eprintln!("usage: eval <audio_dir> <annotation_dir> [--engine auto|dsp|neural] [--trim SECONDS] [--limit N]");
+        eprintln!(
+            "usage: eval <audio_dir> <annotation_dir> [--engine auto|dsp|neural] [--trim SECONDS] [--limit N]"
+        );
         std::process::exit(2);
     };
     let mut trim = 5.0f64;
@@ -149,11 +151,12 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mean = |f: fn(&TrackRow) -> f64| {
-        per_track.iter().map(f).sum::<f64>() / scored as f64
-    };
+    let mean = |f: fn(&TrackRow) -> f64| per_track.iter().map(f).sum::<f64>() / scored as f64;
     let mean_offset = all_offsets.iter().sum::<f64>() / all_offsets.len().max(1) as f64;
-    let offset_std = (all_offsets.iter().map(|o| (o - mean_offset).powi(2)).sum::<f64>()
+    let offset_std = (all_offsets
+        .iter()
+        .map(|o| (o - mean_offset).powi(2))
+        .sum::<f64>()
         / all_offsets.len().max(1) as f64)
         .sqrt();
     let downbeat_rows: Vec<f64> = per_track.iter().filter_map(|t| t.5).collect();
@@ -207,7 +210,10 @@ fn main() {
             } else {
                 format!("{:.3}", downs.iter().sum::<f64>() / downs.len() as f64)
             };
-            println!("  {genre:<20} beat F1 {f1:.3}   downbeat F1 {down}   ({} tracks)", f1s.len());
+            println!(
+                "  {genre:<20} beat F1 {f1:.3}   downbeat F1 {down}   ({} tracks)",
+                f1s.len()
+            );
         }
     }
 }
@@ -218,7 +224,10 @@ fn collect_audio(dir: &Path, out: &mut Vec<PathBuf>) {
         if path.is_dir() {
             collect_audio(&path, out);
         } else if matches!(
-            path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+            path.extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
             Some("wav" | "mp3" | "flac" | "ogg" | "oga" | "m4a" | "aac")
         ) {
             out.push(path);
@@ -242,9 +251,14 @@ fn collect_annotations(dir: &Path) -> BTreeMap<String, PathBuf> {
 fn read_beats_annotation(path: &Path) -> (Vec<f64>, Vec<f64>) {
     let mut beats = Vec::new();
     let mut downbeats = Vec::new();
-    for line in std::fs::read_to_string(path).expect("annotation readable").lines() {
+    for line in std::fs::read_to_string(path)
+        .expect("annotation readable")
+        .lines()
+    {
         let mut cols = line.split_whitespace();
-        let Some(Ok(time)) = cols.next().map(str::parse::<f64>) else { continue };
+        let Some(Ok(time)) = cols.next().map(str::parse::<f64>) else {
+            continue;
+        };
         beats.push(time);
         if let Some(Ok(1.0)) = cols.next().map(str::parse::<f64>) {
             downbeats.push(time);

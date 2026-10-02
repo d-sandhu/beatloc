@@ -29,7 +29,9 @@ fn main() {
             });
         }
         None => {
-            std::io::stdin().read_to_string(&mut input).expect("stdin readable");
+            std::io::stdin()
+                .read_to_string(&mut input)
+                .expect("stdin readable");
         }
     }
     let timeline: serde_json::Value = match serde_json::from_str(&input) {
@@ -85,7 +87,9 @@ fn main() {
     });
     if let (Some(strongest), Some(downbeats)) =
         (strongest, timeline["downbeats"]["items"].as_array())
-        && let Some(d) = downbeats.iter().find(|d| d["time"].as_f64().unwrap() >= strongest)
+        && let Some(d) = downbeats
+            .iter()
+            .find(|d| d["time"].as_f64().unwrap() >= strongest)
     {
         events.push(serde_json::json!({
             "time": d["time"].as_f64().unwrap(),
@@ -98,7 +102,10 @@ fn main() {
     }
 
     events.sort_by(|a, b| {
-        a["time"].as_f64().unwrap_or(0.0).total_cmp(&b["time"].as_f64().unwrap_or(0.0))
+        a["time"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .total_cmp(&b["time"].as_f64().unwrap_or(0.0))
     });
     let out = serde_json::json!({
         "source_duration": timeline["source"]["duration_seconds"],

@@ -27,14 +27,25 @@ fn quiet_to_loud_yields_two_sections() {
 
     let t = analyze_file(
         &path,
-        AnalysisOptions { engine: Engine::Dsp, ..Default::default() },
+        AnalysisOptions {
+            engine: Engine::Dsp,
+            ..Default::default()
+        },
     )
     .expect("analysis failed");
 
     assert_eq!(t.sections.engine, "dsp-novelty-v2");
-    assert_eq!(t.sections.items.len(), 2, "sections: {:?}", t.sections.items);
+    assert_eq!(
+        t.sections.items.len(),
+        2,
+        "sections: {:?}",
+        t.sections.items
+    );
     let boundary = t.sections.items[1].start;
-    assert!((boundary - 10.0).abs() < 1.0, "boundary at {boundary} s, expected ~10 s");
+    assert!(
+        (boundary - 10.0).abs() < 1.0,
+        "boundary at {boundary} s, expected ~10 s"
+    );
     assert_eq!(t.sections.items[0].transition_strength, None);
     let strength = t.sections.items[1].transition_strength.unwrap();
     assert!(strength > 0.5, "strength {strength}");
@@ -54,7 +65,10 @@ fn uniform_signal_yields_one_section() {
 
     let t = analyze_file(
         &path,
-        AnalysisOptions { engine: Engine::Dsp, ..Default::default() },
+        AnalysisOptions {
+            engine: Engine::Dsp,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(t.sections.items.len(), 1);

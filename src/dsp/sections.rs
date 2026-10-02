@@ -46,7 +46,11 @@ pub struct Transition {
 }
 
 /// Detect transitions from magnitude STFT frames on the shared grid.
-pub fn detect_transitions(mags: &[Vec<f32>], hop_seconds: f64, sample_rate: u32) -> Vec<Transition> {
+pub fn detect_transitions(
+    mags: &[Vec<f32>],
+    hop_seconds: f64,
+    sample_rate: u32,
+) -> Vec<Transition> {
     let n = mags.len();
     if n < 4 {
         return Vec::new();
@@ -60,8 +64,16 @@ pub fn detect_transitions(mags: &[Vec<f32>], hop_seconds: f64, sample_rate: u32)
     // CONTRAST seconds of the file edges the windows would be asymmetric, so
     // no boundaries are reported there (an end-of-file fade is not a musical
     // transition, and a section shorter than 2 s is not useful anyway).
-    for (t, nv) in novelty.iter_mut().enumerate().take(n.saturating_sub(w)).skip(w) {
-        *nv = cosine_distance(&band_mean(&features, t - w, t), &band_mean(&features, t, t + w));
+    for (t, nv) in novelty
+        .iter_mut()
+        .enumerate()
+        .take(n.saturating_sub(w))
+        .skip(w)
+    {
+        *nv = cosine_distance(
+            &band_mean(&features, t - w, t),
+            &band_mean(&features, t, t + w),
+        );
     }
 
     let s = (SMOOTH_SECONDS / hop_seconds).max(1.0) as usize;
@@ -84,12 +96,17 @@ pub fn detect_transitions(mags: &[Vec<f32>], hop_seconds: f64, sample_rate: u32)
             {
                 // Too close: keep the stronger of the two.
                 if v > novelty[prev.frame] {
-                    *transitions.last_mut().unwrap() =
-                        Transition { frame: t, strength: (v / max_val) as f32 };
+                    *transitions.last_mut().unwrap() = Transition {
+                        frame: t,
+                        strength: (v / max_val) as f32,
+                    };
                 }
                 continue;
             }
-            transitions.push(Transition { frame: t, strength: (v / max_val) as f32 });
+            transitions.push(Transition {
+                frame: t,
+                strength: (v / max_val) as f32,
+            });
         }
     }
     transitions
@@ -105,7 +122,9 @@ fn band_features(mags: &[Vec<f32>], sample_rate: u32) -> Vec<Vec<f32>> {
     let mut band_of_bin = vec![0usize; n_bins];
     for (bin, band) in band_of_bin.iter_mut().enumerate() {
         let f = bin as f32 * bin_hz;
-        *band = (0..N_BANDS).find(|&b| f < edge(b + 1)).unwrap_or(N_BANDS - 1);
+        *band = (0..N_BANDS)
+            .find(|&b| f < edge(b + 1))
+            .unwrap_or(N_BANDS - 1);
     }
     mags.iter()
         .map(|frame| {
@@ -125,7 +144,12 @@ fn z_normalize_bands(features: &[Vec<f32>]) -> Vec<Vec<f64>> {
     let mut out = vec![vec![0.0f64; N_BANDS]; features.len()];
     for b in 0..N_BANDS {
         let mean = features.iter().map(|f| f64::from(f[b])).sum::<f64>() / n;
-        let std = (features.iter().map(|f| (f64::from(f[b]) - mean).powi(2)).sum::<f64>() / n).sqrt();
+        let std = (features
+            .iter()
+            .map(|f| (f64::from(f[b]) - mean).powi(2))
+            .sum::<f64>()
+            / n)
+            .sqrt();
         if std > 0.0 {
             for (i, f) in features.iter().enumerate() {
                 out[i][b] = (f64::from(f[b]) - mean) / std;
@@ -194,7 +218,10 @@ mod tests {
         let transitions = detect_transitions(&mags, 1.0 / FPS, SR);
         assert_eq!(transitions.len(), 1, "transitions: {transitions:?}");
         let t = transitions[0].frame as f64 / FPS;
-        assert!((t - 15.0).abs() < 1.5, "transition at {t} s, expected ~15 s");
+        assert!(
+            (t - 15.0).abs() < 1.5,
+            "transition at {t} s, expected ~15 s"
+        );
     }
 
     #[test]

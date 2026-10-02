@@ -12,8 +12,8 @@
 use std::fs::File;
 use std::path::Path;
 
-use symphonia::core::codecs::audio::well_known::CODEC_ID_MP3;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::audio::well_known::CODEC_ID_MP3;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
@@ -60,7 +60,12 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio, BeatlocError> {
     }
 
     let mut reader = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| BeatlocError::Unsupported(format!("{}: {e}", path.display())))?;
 
     // Copy out what we need so the track borrow ends before we iterate packets.
@@ -72,7 +77,9 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio, BeatlocError> {
             .codec_params
             .as_ref()
             .and_then(|p| p.audio().cloned())
-            .ok_or_else(|| BeatlocError::Unsupported("audio track has no codec parameters".into()))?;
+            .ok_or_else(|| {
+                BeatlocError::Unsupported("audio track has no codec parameters".into())
+            })?;
         (track.id, params)
     };
 
@@ -120,7 +127,8 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio, BeatlocError> {
         }
     }
 
-    let channels = channels.ok_or_else(|| BeatlocError::Decode("no audio frames decoded".into()))?;
+    let channels =
+        channels.ok_or_else(|| BeatlocError::Decode("no audio frames decoded".into()))?;
     let sample_rate =
         sample_rate.ok_or_else(|| BeatlocError::Decode("sample rate unknown".into()))?;
 
@@ -140,5 +148,11 @@ pub fn decode_file(path: &Path) -> Result<DecodedAudio, BeatlocError> {
 
     let encoder_delay_trimmed = is_mp3.then_some(saw_trim);
 
-    Ok(DecodedAudio { samples: mono, sample_rate, channels, codec, encoder_delay_trimmed })
+    Ok(DecodedAudio {
+        samples: mono,
+        sample_rate,
+        channels,
+        codec,
+        encoder_delay_trimmed,
+    })
 }

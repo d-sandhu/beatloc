@@ -173,7 +173,11 @@ pub fn build_bars(beats: &[f64], downbeats: &[f64]) -> (Vec<Beat>, Vec<Downbeat>
     let downbeat_items: Vec<Downbeat> = downbeats
         .iter()
         .enumerate()
-        .map(|(i, &t)| Downbeat { time: t, bar: i as u32 + 1, score: None })
+        .map(|(i, &t)| Downbeat {
+            time: t,
+            bar: i as u32 + 1,
+            score: None,
+        })
         .collect();
 
     let mut items = Vec::with_capacity(beats.len());
