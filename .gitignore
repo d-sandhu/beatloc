@@ -1,0 +1,6 @@
+/target
+
+# Private working notes (architecture memo, research) — never commit.
+/notes/
+
+.DS_Store
