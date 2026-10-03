@@ -148,6 +148,20 @@ fn run_batch(cli: &Cli) -> anyhow::Result<()> {
 
     let total = files.len();
     let mut failures = 0usize;
+    // Load the neural engine once for the whole batch, not per file.
+    let preloaded = if engine == Engine::Dsp {
+        None
+    } else {
+        let beat =
+            beatloc::resolve_model_path(cli.model.as_deref(), beatloc::DEFAULT_BEAT_MODEL_FILE);
+        let mel =
+            beatloc::resolve_model_path(cli.mel_model.as_deref(), beatloc::DEFAULT_MEL_MODEL_FILE);
+        if beat.is_file() && mel.is_file() {
+            Some(beatloc::inference::NeuralEngine::load(&mel, &beat)?)
+        } else {
+            None
+        }
+    };
     for (i, file) in files.iter().enumerate() {
         // Output path mirrors the input's path relative to the batch root,
         // keeping the full file name (song.mp3.json): the mapping is
@@ -162,7 +176,7 @@ fn run_batch(cli: &Cli) -> anyhow::Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         let result = (|| -> anyhow::Result<()> {
-            let timeline = beatloc::analyze_file(
+            let timeline = beatloc::analyze_file_with_engine(
                 file,
                 AnalysisOptions {
                     include_curves: cli.curves,
@@ -170,6 +184,7 @@ fn run_batch(cli: &Cli) -> anyhow::Result<()> {
                     beat_model: cli.model.clone(),
                     mel_model: cli.mel_model.clone(),
                 },
+                preloaded.as_ref(),
             )?;
             let json = beatloc::serialize::to_json_string(&timeline, cli.pretty)?;
             std::fs::write(&out_path, json)

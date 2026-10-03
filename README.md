@@ -57,7 +57,9 @@ Input: WAV, MP3, FLAC, OGG/Vorbis, AAC/M4A (pure-Rust decoding via
 [Symphonia](https://github.com/pdeljanov/Symphonia)). Timing caveats: AAC
 encoder delay is not yet trimmed by the decoder, and MP3s without a
 Xing/LAME gapless tag cannot be trimmed — both can shift timestamps by up
-to ~50 ms. Untagged MP3s are detected at decode time and produce a stderr
+to ~50 ms, and on AAC a beat in the first ~0.1 s can be missed entirely
+(priming smears the opening). For frame-critical work on AAC, decode to
+WAV first. Untagged MP3s are detected at decode time and produce a stderr
 warning; everything else is sample-accurate.
 
 Contract for machine consumers:

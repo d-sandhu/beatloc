@@ -127,14 +127,27 @@ pub struct AnalysisOptions {
     pub include_curves: bool,
     /// Beat engine selection (default: auto).
     pub engine: Engine,
-    /// Beat model ONNX path (default: ./models/beat_this_small0.onnx).
+    /// Beat model ONNX path (default: resolved by [`resolve_model_path`]).
     pub beat_model: Option<PathBuf>,
-    /// Mel frontend ONNX path (default: ./models/mel_spectrogram.onnx).
+    /// Mel frontend ONNX path (default: resolved by [`resolve_model_path`]).
     pub mel_model: Option<PathBuf>,
 }
 
-/// Run the full V0.1 pipeline: decode → downmix → resample → features → timeline.
+/// Run the full pipeline: decode → downmix → resample → features → timeline.
+/// Loads the neural engine per call; batch callers should use
+/// [`analyze_file_with_engine`] to amortize the load across files.
 pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, BeatlocError> {
+    analyze_file_with_engine(path, options, None)
+}
+
+/// Batch entry point: like [`analyze_file`] but reuses a pre-loaded neural
+/// engine when one is supplied (model parsing is otherwise repeated per
+/// file — small (~10 ms) but free to avoid).
+pub fn analyze_file_with_engine(
+    path: &Path,
+    options: AnalysisOptions,
+    engine: Option<&inference::NeuralEngine>,
+) -> Result<Timeline, BeatlocError> {
     let decoded = decode::decode_file(path)?;
     if decoded.encoder_delay_trimmed == Some(false) {
         eprintln!(
@@ -208,7 +221,14 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
             )));
         }
         Engine::Neural | Engine::Auto if neural_available => {
-            let engine = inference::NeuralEngine::load(&mel_model, &beat_model)?;
+            let loaded;
+            let engine = match engine {
+                Some(e) => e,
+                None => {
+                    loaded = inference::NeuralEngine::load(&mel_model, &beat_model)?;
+                    &loaded
+                }
+            };
             let out = engine.predict(&mono)?;
             let name = model_engine_name(&beat_model);
             let (mut items, mut downbeat_items) = timeline::build_bars(&out.beats, &out.downbeats);
