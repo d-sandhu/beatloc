@@ -18,6 +18,17 @@ cargo test --release         # unit + integration + CLI contract tests
                              # (release keeps the neural-parity test fast)
 ```
 
+Install the CLI so it works from any directory:
+
+```sh
+cargo install --path .       # installs `beatloc` to ~/.cargo/bin
+mkdir -p ~/.local/share/beatloc/models
+cp models/beat_this_small0.onnx models/mel_spectrogram.onnx ~/.local/share/beatloc/models/
+```
+
+Model discovery order: `--model`/`--mel-model` flags → `$BEATLOC_MODEL_DIR`
+→ `~/.local/share/beatloc/models/` → `./models/` (the dev tree).
+
 The neural engine needs its ONNX model files (not committed; see
 `models/manifest.json` for provenance). Regenerate them with:
 

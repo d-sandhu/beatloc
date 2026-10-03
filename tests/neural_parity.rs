@@ -39,8 +39,8 @@ fn golden_f64s(golden: &serde_json::Value, key: &str) -> Vec<f64> {
 
 #[test]
 fn rust_pipeline_matches_python_reference() {
-    let mel_path = Path::new(beatloc::DEFAULT_MEL_MODEL);
-    let model_path = Path::new(beatloc::DEFAULT_BEAT_MODEL);
+    let mel_path = Path::new("models").join(beatloc::DEFAULT_MEL_MODEL_FILE);
+    let model_path = Path::new("models").join(beatloc::DEFAULT_BEAT_MODEL_FILE);
     if !mel_path.is_file() || !model_path.is_file() {
         eprintln!("skipping neural parity test: {MODELS_PRESENT}");
         return;
@@ -50,7 +50,7 @@ fn rust_pipeline_matches_python_reference() {
     // Same path as production: decode -> (no-op resample at 22050) -> ONNX.
     let decoded = decode::decode_file(Path::new("tests/fixtures/drum_loop_120bpm.wav")).unwrap();
     let mono = dsp::resample::to_analysis_rate(&decoded.samples, decoded.sample_rate).unwrap();
-    let engine = NeuralEngine::load(mel_path, model_path).unwrap();
+    let engine = NeuralEngine::load(&mel_path, &model_path).unwrap();
     let out = engine.predict(&mono).unwrap();
 
     // 1. Frame count must match the reference pipeline exactly.
@@ -101,7 +101,9 @@ fn rust_pipeline_matches_python_reference() {
 #[test]
 fn auto_engine_uses_neural_when_models_present_and_dsp_otherwise() {
     let wav = Path::new("tests/fixtures/drum_loop_120bpm.wav");
-    let models = Path::new(beatloc::DEFAULT_BEAT_MODEL).is_file();
+    let models = Path::new("models")
+        .join(beatloc::DEFAULT_BEAT_MODEL_FILE)
+        .is_file();
 
     let auto = beatloc::analyze_file(
         wav,
@@ -144,7 +146,10 @@ fn auto_engine_uses_neural_when_models_present_and_dsp_otherwise() {
 
 #[test]
 fn neural_scores_are_present_and_bounded() {
-    if !Path::new(beatloc::DEFAULT_BEAT_MODEL).is_file() {
+    if !Path::new("models")
+        .join(beatloc::DEFAULT_BEAT_MODEL_FILE)
+        .is_file()
+    {
         eprintln!("skipping: {MODELS_PRESENT}");
         return;
     }
@@ -175,7 +180,10 @@ fn neural_scores_are_present_and_bounded() {
 
 #[test]
 fn bars_are_numbered_from_first_downbeat() {
-    if !Path::new(beatloc::DEFAULT_BEAT_MODEL).is_file() {
+    if !Path::new("models")
+        .join(beatloc::DEFAULT_BEAT_MODEL_FILE)
+        .is_file()
+    {
         eprintln!("skipping: {MODELS_PRESENT}");
         return;
     }

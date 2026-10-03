@@ -7,7 +7,7 @@
 //!   (clap's default).
 //! - `--output` never overwrites an existing file unless `--force` is given.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, ValueEnum};
@@ -58,11 +58,11 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = EngineArg::Auto)]
     engine: EngineArg,
 
-    /// Path to the beat model ONNX (default: ./models/beat_this_small0.onnx)
+    /// Path to the beat model ONNX (default: auto-detected; see README install notes)
     #[arg(long)]
     model: Option<PathBuf>,
 
-    /// Path to the mel frontend ONNX (default: ./models/mel_spectrogram.onnx)
+    /// Path to the mel frontend ONNX (default: auto-detected; see README install notes)
     #[arg(long = "mel-model")]
     mel_model: Option<PathBuf>,
 }
@@ -96,7 +96,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     };
     if engine == Engine::Auto && !models_available(&cli) {
         eprintln!(
-            "note: neural models not found (default: ./models/, see scripts/export_model.py); \
+            "note: neural models not found (looked in $BEATLOC_MODEL_DIR, ~/.local/share/beatloc/models, ./models); \
              using the dsp engine"
         );
     }
@@ -181,13 +181,7 @@ fn run_batch(cli: &Cli) -> anyhow::Result<()> {
 }
 
 fn models_available(cli: &Cli) -> bool {
-    let beat = cli
-        .model
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_BEAT_MODEL));
-    let mel = cli
-        .mel_model
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(beatloc::DEFAULT_MEL_MODEL));
-    Path::new(&beat).is_file() && Path::new(&mel).is_file()
+    beatloc::resolve_model_path(cli.model.as_deref(), beatloc::DEFAULT_BEAT_MODEL_FILE).is_file()
+        && beatloc::resolve_model_path(cli.mel_model.as_deref(), beatloc::DEFAULT_MEL_MODEL_FILE)
+            .is_file()
 }

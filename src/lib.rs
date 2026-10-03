@@ -59,10 +59,40 @@ pub const STFT_HOP: usize = 441;
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
 pub const SCHEMA_VERSION: &str = "0.6.0";
 
-/// Default locations of the ONNX model artifacts (regenerate with
+/// File names of the ONNX model artifacts (regenerate with
 /// `scripts/export_model.py`; see models/manifest.json for provenance).
-pub const DEFAULT_BEAT_MODEL: &str = "models/beat_this_small0.onnx";
-pub const DEFAULT_MEL_MODEL: &str = "models/mel_spectrogram.onnx";
+pub const DEFAULT_BEAT_MODEL_FILE: &str = "beat_this_small0.onnx";
+pub const DEFAULT_MEL_MODEL_FILE: &str = "mel_spectrogram.onnx";
+
+/// Resolve a model path. Discovery order, first hit wins:
+/// 1. the explicit `--model` / `--mel-model` flag,
+/// 2. `$BEATLOC_MODEL_DIR/<file>`,
+/// 3. `~/.local/share/beatloc/models/<file>` (installed location),
+/// 4. `./models/<file>` (the dev tree, so the repo works unchanged).
+pub fn resolve_model_path(
+    explicit: Option<&std::path::Path>,
+    default_file: &str,
+) -> std::path::PathBuf {
+    use std::path::PathBuf;
+    if let Some(p) = explicit {
+        return p.to_path_buf();
+    }
+    if let Ok(dir) = std::env::var("BEATLOC_MODEL_DIR") {
+        let p = PathBuf::from(dir).join(default_file);
+        if p.is_file() {
+            return p;
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home)
+            .join(".local/share/beatloc/models")
+            .join(default_file);
+        if p.is_file() {
+            return p;
+        }
+    }
+    PathBuf::from("models").join(default_file)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum BeatlocError {
@@ -164,21 +194,15 @@ pub fn analyze_file(path: &Path, options: AnalysisOptions) -> Result<Timeline, B
     // V0.2/V0.3: beat engine. DSP is the baseline; neural runs when selected
     // and its model files are available.
     let fps = ANALYSIS_SAMPLE_RATE as f64 / STFT_HOP as f64;
-    let beat_model = options
-        .beat_model
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_BEAT_MODEL));
-    let mel_model = options
-        .mel_model
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MEL_MODEL));
+    let beat_model = resolve_model_path(options.beat_model.as_deref(), DEFAULT_BEAT_MODEL_FILE);
+    let mel_model = resolve_model_path(options.mel_model.as_deref(), DEFAULT_MEL_MODEL_FILE);
     let neural_available = beat_model.is_file() && mel_model.is_file();
 
     let (mut tempo, beats, downbeats) = match options.engine {
         Engine::Neural if !neural_available => {
             return Err(BeatlocError::Inference(format!(
-                "neural engine selected but model files are missing (expected {} and {}; \
-                 regenerate with scripts/export_model.py)",
+                "neural engine selected but model files are missing (looked at {} and {}; \
+                 see scripts/export_model.py)",
                 beat_model.display(),
                 mel_model.display()
             )));
