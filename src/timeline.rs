@@ -29,6 +29,15 @@ pub struct Onset {
     pub time: f64,
     /// Spectral flux at the picked frame (arbitrary, relative units).
     pub strength: f32,
+    /// 0-based index of the beat whose interval contains this onset.
+    /// Absent when the onset falls outside the beat span.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub beat_index: Option<u32>,
+    /// Position within that beat interval, [0, 1): 0 = on the beat,
+    /// 0.5 = halfway to the next. Continuous, NOT quantized — swung events
+    /// keep their true position.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub beat_phase: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +55,10 @@ pub struct Timeline {
     /// (the DSP baseline does not). Absent = unsupported or none detected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub downbeats: Option<Downbeats>,
+    /// Per-bar overview (energy, onset density) derived from beats +
+    /// energy + onsets. Absent when bars are unknown (no downbeats).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bars: Option<Vec<Bar>>,
     /// Section boundaries from feature-contrast novelty. Detects THAT a
     /// transition happens, not WHAT the section is — no semantic labels.
     pub sections: Sections,
@@ -162,6 +175,103 @@ pub struct Section {
     pub transition_strength: Option<f32>,
 }
 
+/// One bar with derived aggregates — the bar-level overview consumers
+/// otherwise recompute by hand (energy shape finds breaks; onset density
+/// finds fills).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Bar {
+    /// 1-based bar number, matching `beats.items[].bar`.
+    pub bar: u32,
+    /// Seconds from decoded stream start: first beat of the bar.
+    pub start: f64,
+    /// First beat of the NEXT bar. For the final bar: last beat + the
+    /// median inter-beat interval (an estimate; documented as such).
+    pub end: f64,
+    /// Mean of the energy frames (dBFS) within [start, end). Absent only in
+    /// the degenerate case of a bar containing no energy frames at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean_energy_dbfs: Option<f32>,
+    /// Number of onsets within [start, end).
+    pub onset_count: u32,
+}
+
+/// Build the per-bar overview from beats that carry bar numbers, the energy
+/// curve, and onset times. Returns None when no beat has a bar (no
+/// downbeats — the DSP engine — or everything is anacrusis).
+pub fn bar_overview(
+    beats: &[Beat],
+    energy: &[f32],
+    onset_times: &[f64],
+    window: usize,
+    hop: usize,
+    sample_rate: u32,
+) -> Option<Vec<Bar>> {
+    let max_bar = beats.iter().filter_map(|b| b.bar).max()?;
+    if beats.len() < 2 {
+        return None;
+    }
+    let mut ibis: Vec<f64> = beats.windows(2).map(|w| w[1].time - w[0].time).collect();
+    ibis.sort_by(f64::total_cmp);
+    let median_ibi = ibis[ibis.len() / 2];
+
+    // Frame whose centre time is >= t: inverse of (i*hop + window/2)/sr.
+    let frame_from = |t: f64| -> usize {
+        (((t * f64::from(sample_rate) - (window / 2) as f64) / hop as f64).ceil())
+            .clamp(0.0, energy.len() as f64) as usize
+    };
+
+    let mut bars: Vec<Bar> = Vec::new();
+    for n in 1..=max_bar {
+        let mut in_bar = beats.iter().filter(|b| b.bar == Some(n));
+        let start = in_bar.next()?.time;
+        let last_in_bar = in_bar.next_back().map(|b| b.time).unwrap_or(start);
+        let end = match beats.iter().find(|b| b.bar == Some(n + 1)) {
+            Some(b) => b.time,
+            None => last_in_bar + median_ibi, // estimate; see struct docs
+        };
+        let frames = &energy[frame_from(start)..frame_from(end)];
+        let mean_energy_dbfs =
+            (!frames.is_empty()).then(|| frames.iter().sum::<f32>() / frames.len() as f32);
+        let onset_count = onset_times
+            .iter()
+            .filter(|&&t| t >= start && t < end)
+            .count() as u32;
+        bars.push(Bar {
+            bar: n,
+            start,
+            end,
+            mean_energy_dbfs,
+            onset_count,
+        });
+    }
+    if bars.is_empty() { None } else { Some(bars) }
+}
+
+/// Attach `beat_index`/`beat_phase` to onsets: the index of the beat whose
+/// interval [beat_i, beat_{i+1}) contains the onset, and the fractional
+/// position within that interval in [0, 1). Continuous — no grid
+/// quantization, so swung events keep their true position. Onsets outside
+/// the beat span keep `None` (unknown = absent).
+pub fn assign_beat_phase(onsets: &mut [Onset], beat_times: &[f64]) {
+    if beat_times.len() < 2 {
+        return;
+    }
+    for o in onsets.iter_mut() {
+        o.beat_index = None;
+        o.beat_phase = None;
+        if o.time < beat_times[0] || o.time >= *beat_times.last().unwrap() {
+            continue;
+        }
+        // partition_point: first index with beat_time > o.time, minus 1.
+        let i = beat_times.partition_point(|&bt| bt <= o.time) - 1;
+        let span = beat_times[i + 1] - beat_times[i];
+        if span > 0.0 {
+            o.beat_index = Some(i as u32);
+            o.beat_phase = Some(((o.time - beat_times[i]) / span).clamp(0.0, 1.0));
+        }
+    }
+}
+
 /// Assign bar numbers and bar positions to beats, given downbeats that have
 /// been snapped to beat times. Bars are 1-based from the first downbeat;
 /// beats before it (a possible anacrusis) get `None` — the unknown state.
@@ -268,4 +378,88 @@ pub struct Curve {
 pub struct Curves {
     pub energy: Curve,
     pub onset_strength: Curve,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn beat(time: f64, index: u32, bar: Option<u32>) -> Beat {
+        Beat {
+            time,
+            index,
+            bar,
+            bar_position: None,
+            score: None,
+        }
+    }
+
+    fn onset(time: f64) -> Onset {
+        Onset {
+            time,
+            strength: 1.0,
+            beat_index: None,
+            beat_phase: None,
+        }
+    }
+
+    #[test]
+    fn bar_overview_aggregates_per_bar() {
+        // 8 beats at 120 BPM in 4/4 (2 bars), downbeat at beat 0.
+        let beats: Vec<Beat> = (0..8)
+            .map(|i| beat(i as f64 * 0.5, i, Some(i / 4 + 1)))
+            .collect();
+        // Energy: quiet (-40) in bar 1's span, loud (-10) in bar 2's.
+        // Grid: 50 fps, frame i centred at (i*441+512)/22050.
+        let mut energy = vec![-40.0f32; 400];
+        for (i, e) in energy.iter_mut().enumerate() {
+            let t = (i * 441 + 512) as f64 / 22050.0;
+            if t >= 2.0 {
+                *e = -10.0;
+            }
+        }
+        let onsets = [0.5, 1.0, 2.0, 2.5, 3.0, 3.25, 3.75]; // 2 in bar 1, 5 in bar 2
+        let bars = bar_overview(&beats, &energy, &onsets, 1024, 441, 22050).unwrap();
+        assert_eq!(bars.len(), 2);
+        assert!((bars[0].start - 0.0).abs() < 1e-9 && (bars[0].end - 2.0).abs() < 1e-9);
+        assert_eq!(bars[0].onset_count, 2);
+        assert_eq!(bars[1].onset_count, 5);
+        let e0 = bars[0].mean_energy_dbfs.unwrap();
+        let e1 = bars[1].mean_energy_dbfs.unwrap();
+        assert!(
+            e1 > e0 + 20.0,
+            "bar2 {e1} should be much louder than bar1 {e0}"
+        );
+        // Final bar end is an estimate: last beat + median IBI.
+        assert!((bars[1].end - 4.0).abs() < 1e-9, "got {}", bars[1].end);
+    }
+
+    #[test]
+    fn bar_overview_absent_without_bars() {
+        let beats: Vec<Beat> = (0..8).map(|i| beat(i as f64 * 0.5, i, None)).collect();
+        assert!(bar_overview(&beats, &[-20.0; 400], &[], 1024, 441, 22050).is_none());
+        assert!(bar_overview(&[], &[-20.0; 400], &[], 1024, 441, 22050).is_none());
+    }
+
+    #[test]
+    fn beat_phase_is_continuous_and_bracketed() {
+        let beats = [1.0, 1.5, 2.0, 2.5];
+        let mut onsets = vec![
+            onset(0.5),  // before first beat: no phase
+            onset(1.0),  // exactly on beat 0
+            onset(1.75), // halfway between beats 1 and 2
+            onset(2.9),  // after last beat: no phase
+        ];
+        assign_beat_phase(&mut onsets, &beats);
+        assert_eq!(onsets[0].beat_index, None);
+        assert_eq!(onsets[1].beat_index, Some(0));
+        assert!((onsets[1].beat_phase.unwrap() - 0.0).abs() < 1e-9);
+        assert_eq!(onsets[2].beat_index, Some(1));
+        assert!((onsets[2].beat_phase.unwrap() - 0.5).abs() < 1e-9);
+        assert_eq!(onsets[3].beat_index, None);
+        // No beats -> nothing assigned, no panic.
+        let mut o = vec![onset(1.0)];
+        assign_beat_phase(&mut o, &[]);
+        assert_eq!(o[0].beat_index, None);
+    }
 }

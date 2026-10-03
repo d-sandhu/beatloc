@@ -67,11 +67,11 @@ Contract for machine consumers:
 - stdout carries **only** the JSON result; diagnostics go to stderr.
 - Exit codes: `0` success, `1` analysis/IO error, `2` usage error.
 
-## Output (schema v0.6.0)
+## Output (schema v0.7.0)
 
 ```jsonc
 {
-  "format":    { "name": "beatloc-timeline", "version": "0.6.0" },
+  "format":    { "name": "beatloc-timeline", "version": "0.7.0" },
   "generator": { "name": "beatloc", "version": "0.1.0" },
   "source":    { "duration_seconds": 9.5, "sample_rate": 44100, "channels": 2, "codec": "mp3" },
   "analysis":  { "sample_rate": 22050, "window_size": 1024, "hop_size": 441,
@@ -83,10 +83,12 @@ Contract for machine consumers:
                  "items": [ { "time": 1.02, "index": 0, "bar": 1, "bar_position": 1, "score": 0.98 } ] },
   "downbeats": { "engine": "beat-this-small0", "mean_score": 0.98,
                  "items": [ { "time": 1.02, "bar": 1, "score": 0.99 } ] },
+  "bars":      [ { "bar": 1, "start": 1.02, "end": 3.02,
+                   "mean_energy_dbfs": -14.5, "onset_count": 7 } ],
   "sections":  { "engine": "dsp-novelty-v2",
                  "items": [ { "index": 0, "start": 0.0, "end": 16.42 },
                             { "index": 1, "start": 16.42, "end": 30.05, "transition_strength": 0.91 } ] },
-  "onsets":    [ { "time": 0.983, "strength": 12.34 } ],
+  "onsets":    [ { "time": 0.983, "strength": 12.34, "beat_index": 0, "beat_phase": 0.93 } ],
   "curves":    { "energy":         { "start_seconds": 0.0232, "hop_seconds": 0.02, "units": "dbfs", "values": [] },
                  "onset_strength": { "start_seconds": 0.0232, "hop_seconds": 0.02, "units": "spectral_flux", "values": [] } }
 }
@@ -102,6 +104,14 @@ Contract for machine consumers:
   downbeats are unknown (e.g. the DSP engine) or before the first downbeat
   (anacrusis).
 - `downbeats` is absent for engines without downbeat support.
+- `bars` is a derived per-bar overview (`start`, `end`, `mean_energy_dbfs`,
+  `onset_count`) — the song-at-a-glance table. A bar's `end` is the next
+  bar's start; the final bar's end is estimated (last beat + median beat
+  interval). Absent when downbeats are unknown.
+- `onsets[].beat_index` / `beat_phase` tie each onset to the beat grid
+  WITHOUT quantizing it: `beat_phase` is the continuous position within the
+  beat interval ([0, 1)), so swung events keep their true position. Absent
+  when the onset falls outside the beat span.
 - `score` fields (neural engine only) are the sigmoid of the model's logit
   at each picked peak: how strongly the model asserted the event. They are
   **uncalibrated** — a relative trust signal within/across tracks, NOT a

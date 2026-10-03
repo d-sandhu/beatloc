@@ -105,6 +105,8 @@ pub fn pick_onsets(flux: &[f32], sample_rate: u32, window: usize, hop: usize) ->
             onsets.push(Onset {
                 time: frame_center_seconds(i, window, hop, sample_rate),
                 strength: v,
+                beat_index: None, // attached later, once beats exist
+                beat_phase: None,
             });
         }
     }

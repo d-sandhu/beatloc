@@ -57,7 +57,7 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.6.0";
+pub const SCHEMA_VERSION: &str = "0.7.0";
 
 /// File names of the ONNX model artifacts (regenerate with
 /// `scripts/export_model.py`; see models/manifest.json for provenance).
@@ -163,7 +163,7 @@ pub fn analyze_file_with_engine(
     // One shared STFT grid feeds both the onset envelope and sections.
     let mags = dsp::stft::stft_magnitudes(&mono, STFT_WINDOW, STFT_HOP);
     let flux = dsp::onset::flux_from_mags(&mags);
-    let onsets = dsp::onset::pick_onsets(&flux, ANALYSIS_SAMPLE_RATE, STFT_WINDOW, STFT_HOP);
+    let mut onsets = dsp::onset::pick_onsets(&flux, ANALYSIS_SAMPLE_RATE, STFT_WINDOW, STFT_HOP);
     let energy = dsp::energy::frame_rms_dbfs(&mono, STFT_WINDOW, STFT_HOP);
 
     // Sections: spans between consecutive transition boundaries (spectral
@@ -306,13 +306,25 @@ pub fn analyze_file_with_engine(
     };
 
     // Local tempo track, derived from the final beat list (engine-agnostic).
+    let beat_times: Vec<f64> = beats.items.iter().map(|b| b.time).collect();
     if let Some(t) = tempo.as_mut() {
-        let times: Vec<f64> = beats.items.iter().map(|b| b.time).collect();
-        let points = dsp::local_tempo_points(&times, 4);
+        let points = dsp::local_tempo_points(&beat_times, 4);
         if !points.is_empty() {
             t.local = Some(points);
         }
     }
+
+    // Derived views that need the final beat list: continuous beat phase on
+    // every onset, and the per-bar overview (energy/density aggregates).
+    timeline::assign_beat_phase(&mut onsets, &beat_times);
+    let bars = timeline::bar_overview(
+        &beats.items,
+        &energy,
+        &onsets.iter().map(|o| o.time).collect::<Vec<_>>(),
+        STFT_WINDOW,
+        STFT_HOP,
+        ANALYSIS_SAMPLE_RATE,
+    );
 
     let curves = options.include_curves.then(|| timeline::Curves {
         energy: timeline::Curve {
@@ -364,6 +376,7 @@ pub fn analyze_file_with_engine(
         tempo,
         beats,
         downbeats,
+        bars,
         sections,
         onsets,
         curves,
