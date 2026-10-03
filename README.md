@@ -243,3 +243,13 @@ cargo run --release --example eval_sections -- datasets/rwc-audio datasets/rwc-a
 ## License
 
 MIT OR Apache-2.0
+
+### Third-party
+
+The neural engine runs the [Beat This!](https://github.com/CPJKU/beat_this)
+model weights (MIT, © 2024 Institute of Computational Perception, JKU Linz).
+The weights are not included in this repository; they are exported locally by
+`scripts/export_model.py`. Upstream notes that some of its training data is
+copyrighted or under limited Creative Commons licenses. See [NOTICE](NOTICE)
+for the full attribution, which must accompany any redistribution of the
+weights.
