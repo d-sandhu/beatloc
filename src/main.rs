@@ -149,9 +149,18 @@ fn run_batch(cli: &Cli) -> anyhow::Result<()> {
     let total = files.len();
     let mut failures = 0usize;
     for (i, file) in files.iter().enumerate() {
-        let out_path = out_dir
-            .join(file.file_stem().unwrap_or_default())
-            .with_extension("json");
+        // Output path mirrors the input's path relative to the batch root,
+        // keeping the full file name (song.mp3.json): the mapping is
+        // injective by construction. (The old stem-only naming silently
+        // overwrote results when inputs shared a stem — same song as
+        // .wav + .mp3, or same file name in different subdirectories.)
+        let rel = file.strip_prefix(&cli.input).unwrap_or(file.as_path());
+        let mut name = rel.as_os_str().to_owned();
+        name.push(".json");
+        let out_path = out_dir.join(name);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let result = (|| -> anyhow::Result<()> {
             let timeline = beatloc::analyze_file(
                 file,

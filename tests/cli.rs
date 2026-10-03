@@ -126,12 +126,53 @@ fn batch_mode_writes_one_json_per_file_and_requires_output_dir() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    for name in ["a.json", "b.json"] {
+    for name in ["a.wav.json", "b.wav.json"] {
         let json: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(out_dir.join(name)).expect("per-file JSON written"),
         )
         .unwrap();
         assert_eq!(json["format"]["name"], "beatloc-timeline");
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn batch_mode_never_collides_on_shared_stems() {
+    // Regression: stem-only output naming silently overwrote results when
+    // inputs shared a stem (song.wav + song.mp3, or same name in two
+    // subdirectories). Outputs now mirror the input's relative path and
+    // keep the full file name, making collisions impossible.
+    let dir = std::env::temp_dir().join(format!("beatloc-collision-{}", std::process::id()));
+    let out_dir = dir.join("out");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let wav = common::click_track(22_050, &[0.5, 1.0], 1.5);
+    common::write_wav_i16(&dir.join("song.wav"), 22_050, 1, &wav);
+    // Same bytes under a different extension: content probing handles it;
+    // what matters here is the name collision, not the codec.
+    std::fs::copy(dir.join("song.wav"), dir.join("song.mp3")).unwrap();
+    common::write_wav_i16(&dir.join("sub/song.wav"), 22_050, 1, &wav);
+
+    let out = beatloc()
+        .arg(&dir)
+        .arg("--output-dir")
+        .arg(&out_dir)
+        .arg("--engine")
+        .arg("dsp")
+        .arg("-r")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for expected in ["song.wav.json", "song.mp3.json", "sub/song.wav.json"] {
+        assert!(
+            out_dir.join(expected).is_file(),
+            "missing {}",
+            out_dir.join(expected).display()
+        );
     }
 
     std::fs::remove_dir_all(&dir).ok();

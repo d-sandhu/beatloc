@@ -49,7 +49,8 @@ beatloc track.mp3 --curves --json              # include dense per-frame curves
 beatloc track.mp3 --engine dsp --json          # classical baseline (no downbeats)
 beatloc track.mp3 --engine neural --json       # neural engine (beats + downbeats)
 beatloc track.mp3 --model models/beat_this_final0.onnx --json   # full-accuracy model
-beatloc ./music/ --output-dir timelines/ -r    # batch: one JSON per file, recursive
+beatloc ./music/ --output-dir timelines/ -r    # batch: one JSON per file (song.mp3.json;
+                                               # subdirectories mirrored), recursive
 ```
 
 Input: WAV, MP3, FLAC, OGG/Vorbis, AAC/M4A (pure-Rust decoding via
