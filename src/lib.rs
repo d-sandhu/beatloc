@@ -57,7 +57,7 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.7.0";
+pub const SCHEMA_VERSION: &str = "0.8.0";
 
 /// File names of the ONNX model artifacts (regenerate with
 /// `scripts/export_model.py`; see models/manifest.json for provenance).
@@ -170,6 +170,11 @@ pub fn analyze_file_with_engine(
     // self-similarity novelty over the shared grid; engine-independent).
     let hop_seconds = STFT_HOP as f64 / ANALYSIS_SAMPLE_RATE as f64;
     let transitions = dsp::sections::detect_transitions(&mags, hop_seconds, ANALYSIS_SAMPLE_RATE);
+
+    // Tonal events (harmonic-stack contrast on its own fine grid — see
+    // dsp::tonal docs; engine-independent). Catches pitched note onsets
+    // that flux misses.
+    let tonal_events = dsp::tonal::detect_tonal_events(&mono, ANALYSIS_SAMPLE_RATE, STFT_WINDOW);
     let mut section_items = Vec::with_capacity(transitions.len() + 1);
     let mut start = 0.0f64;
     for (i, t) in transitions.iter().enumerate() {
@@ -377,6 +382,7 @@ pub fn analyze_file_with_engine(
         beats,
         downbeats,
         bars,
+        tonal_events,
         sections,
         onsets,
         curves,

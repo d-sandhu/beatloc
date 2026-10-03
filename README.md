@@ -67,11 +67,11 @@ Contract for machine consumers:
 - stdout carries **only** the JSON result; diagnostics go to stderr.
 - Exit codes: `0` success, `1` analysis/IO error, `2` usage error.
 
-## Output (schema v0.7.0)
+## Output (schema v0.8.0)
 
 ```jsonc
 {
-  "format":    { "name": "beatloc-timeline", "version": "0.7.0" },
+  "format":    { "name": "beatloc-timeline", "version": "0.8.0" },
   "generator": { "name": "beatloc", "version": "0.1.0" },
   "source":    { "duration_seconds": 9.5, "sample_rate": 44100, "channels": 2, "codec": "mp3" },
   "analysis":  { "sample_rate": 22050, "window_size": 1024, "hop_size": 441,
@@ -89,6 +89,8 @@ Contract for machine consumers:
                  "items": [ { "index": 0, "start": 0.0, "end": 16.42 },
                             { "index": 1, "start": 16.42, "end": 30.05, "transition_strength": 0.91 } ] },
   "onsets":    [ { "time": 0.983, "strength": 12.34, "beat_index": 0, "beat_phase": 0.93 } ],
+  "tonal_events": [ { "time": 1.31, "f0_hz": 914.0, "contrast_db": 22.1,
+                      "sustain_db": 18.4, "level_db_rel": 0.3 } ],
   "curves":    { "energy":         { "start_seconds": 0.0232, "hop_seconds": 0.02, "units": "dbfs", "values": [] },
                  "onset_strength": { "start_seconds": 0.0232, "hop_seconds": 0.02, "units": "spectral_flux", "values": [] } }
 }
@@ -112,6 +114,16 @@ Contract for machine consumers:
   WITHOUT quantizing it: `beat_phase` is the continuous position within the
   beat interval ([0, 1)), so swung events keep their true position. Absent
   when the onset falls outside the beat span.
+- `tonal_events` are pitched note onsets from harmonic-stack contrast (a
+  tone's partials must stand out from their spectral neighborhood; drums
+  and noise can't score). This is the lane that sees synth hooks *under*
+  the drums — flux `onsets` can't (measured: 0% recall on a
+  human-validated hook oracle). It detects ANY melodic content (vocals
+  included), not "the hook" specifically — `f0_hz` lets consumers cluster
+  by pitch. Tones need ~4 audible partials to register (pure sine-ish
+  tones are rejected by design). Runs on its own 4 ms-hop grid; scores are
+  uncalibrated. Validated against the oracle: recall 0.82–0.95 at
+  precision 0.97–1.00 (±50 ms) in hook regions.
 - `score` fields (neural engine only) are the sigmoid of the model's logit
   at each picked peak: how strongly the model asserted the event. They are
   **uncalibrated** — a relative trust signal within/across tracks, NOT a

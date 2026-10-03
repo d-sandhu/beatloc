@@ -59,6 +59,11 @@ pub struct Timeline {
     /// energy + onsets. Absent when bars are unknown (no downbeats).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bars: Option<Vec<Bar>>,
+    /// Tonal (pitched) note onsets from harmonic-stack contrast — the lane
+    /// that sees synth hooks under drums. Flux `onsets` stay percussive;
+    /// these are complementary. Empty when none are detected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tonal_events: Vec<TonalEvent>,
     /// Section boundaries from feature-contrast novelty. Detects THAT a
     /// transition happens, not WHAT the section is — no semantic labels.
     pub sections: Sections,
@@ -175,6 +180,25 @@ pub struct Section {
     pub transition_strength: Option<f32>,
 }
 
+/// A tonal (pitched) event: a note-like onset with an estimated
+/// fundamental. Detected by harmonic-stack contrast, NOT energy flux —
+/// this is the lane that sees synth hooks under drums.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct TonalEvent {
+    /// Seconds from decoded stream start (frame-centre convention).
+    pub time: f64,
+    /// Detected fundamental in Hz (6 Hz search-grid resolution).
+    pub f0_hz: f32,
+    /// Harmonic contrast at onset, dB. Uncalibrated strength (relative
+    /// within/across tracks), NOT a probability.
+    pub contrast_db: f32,
+    /// Mean contrast over the two frames after onset, dB — how well the
+    /// tone held. Uncalibrated.
+    pub sustain_db: f32,
+    /// Harmonic level relative to the track's median event, dB (0 = median).
+    /// The level gate uses this to drop near-silence artifacts.
+    pub level_db_rel: f32,
+}
 /// One bar with derived aggregates — the bar-level overview consumers
 /// otherwise recompute by hand (energy shape finds breaks; onset density
 /// finds fills).

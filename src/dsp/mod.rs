@@ -8,6 +8,7 @@ pub mod onset;
 pub mod resample;
 pub mod sections;
 pub mod stft;
+pub mod tonal;
 
 /// Seconds from signal start to the centre of analysis frame `frame`.
 ///
