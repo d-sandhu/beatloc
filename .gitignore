@@ -13,3 +13,6 @@
 /models/
 
 .DS_Store
+
+# Claude Code local state (worktrees, settings) — never commit.
+/.claude/
