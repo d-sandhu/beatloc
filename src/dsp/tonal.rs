@@ -2,10 +2,11 @@
 //!
 //! Why this exists: spectral-flux onsets detect *energy transients* — drums,
 //! percussion, broadband hits. A soft-attack tonal event (a synth hook)
-//! that lands near a drum hit contributes almost no spectral change and is
-//! structurally invisible to flux (measured: 0% recall at ±30 ms against a
-//! human-validated hook oracle on a real track — the hook's dotted-eighth
-//! grid decorrelates from the drums' straight eighths).
+//! overlapping drum energy (hits or their tails) contributes almost no
+//! spectral change and is structurally invisible to flux (measured: 0%
+//! recall at ±30 ms against a human-validated hook oracle on a real track —
+//! the hook's dotted-eighth grid decorrelates from the drums' straight
+//! eighths).
 //!
 //! Method (ported from a reference detector the project owner validated by
 //! ear on real music; generalized from its song-tuned f0 range): for a grid
@@ -58,6 +59,51 @@ const LEVEL_FLOOR_DB: f32 = -20.0;
 /// the shared grid, 4 ms hop.
 const TONAL_HOP: usize = 88; // 3.99 ms at 22050 Hz
 
+/// Detector provenance for the `tonal_events.engine` field.
+pub const ENGINE: &str = "dsp-harmonic-contrast-v1";
+
+/// Contrast score (dB) for one candidate f0 on one frame's power cumsum.
+/// None when the 5th harmonic would leave the spectrum.
+fn contrast_score(csum: &[f64], n_bins: isize, f0: f32, bin_hz: f32) -> Option<f32> {
+    let band = |k0: isize, k1: isize| -> f64 {
+        let a = k0.clamp(0, n_bins) as usize;
+        let b = k1.clamp(0, n_bins) as usize;
+        if b > a { csum[b] - csum[a] } else { 0.0 }
+    };
+    let mut contrasts = [0.0f32; 4];
+    for (ci, &h) in HARMONICS.iter().enumerate() {
+        let k = (h as f32 * f0 / bin_hz).round() as isize;
+        if k + 10 >= n_bins {
+            return None;
+        }
+        let peak = band(k - 1, k + 2);
+        let side = (band(k - 9, k - 5) + band(k + 6, k + 10)) * (3.0 / 8.0);
+        contrasts[ci] = (10.0 * ((peak + 1e-12) / (side + 1e-12)).log10()) as f32;
+    }
+    // 2nd-weakest harmonic (partial fold, no full sort).
+    let (_, score) = contrasts
+        .iter()
+        .fold((f32::INFINITY, f32::INFINITY), |(a, b), &c| {
+            if c < a {
+                (c, a)
+            } else if c < b {
+                (a, c)
+            } else {
+                (a, b)
+            }
+        });
+    Some(score)
+}
+
+/// Power cumsum for one magnitude frame (band sums become subtractions).
+fn frame_cumsum(m: &[f32]) -> Vec<f64> {
+    let mut csum = vec![0.0f64; m.len() + 1];
+    for (b, &v) in m.iter().enumerate() {
+        csum[b + 1] = csum[b] + (v as f64) * (v as f64);
+    }
+    csum
+}
+
 /// Per-frame tone score: best-f0 2nd-weakest harmonic contrast (dB).
 fn tone_scores(mags: &[Vec<f32>], bin_hz: f32) -> (Vec<f32>, Vec<f32>) {
     let n_frames = mags.len();
@@ -66,49 +112,15 @@ fn tone_scores(mags: &[Vec<f32>], bin_hz: f32) -> (Vec<f32>, Vec<f32>) {
 
     let mut scores = vec![f32::NEG_INFINITY; n_frames];
     let mut best_f0 = vec![0.0f32; n_frames];
-    let mut csum = vec![0.0f64; n_bins as usize + 1];
     for (i, m) in mags.iter().enumerate() {
-        csum[0] = 0.0;
-        for (b, &v) in m.iter().enumerate() {
-            csum[b + 1] = csum[b] + (v as f64) * (v as f64);
-        }
-        let band = |k0: isize, k1: isize| -> f64 {
-            let a = k0.clamp(0, n_bins) as usize;
-            let b = k1.clamp(0, n_bins) as usize;
-            if b > a { csum[b] - csum[a] } else { 0.0 }
-        };
+        let csum = frame_cumsum(m);
         let mut best = f32::NEG_INFINITY;
         let mut best_f = 0.0f32;
         for fi in 0..n_f0 {
             let f0 = F0_MIN_HZ + fi as f32 * F0_STEP_HZ;
-            let mut contrasts = [0.0f32; 4];
-            let mut valid = true;
-            for (ci, &h) in HARMONICS.iter().enumerate() {
-                let k = (h as f32 * f0 / bin_hz).round() as isize;
-                if k + 10 >= n_bins {
-                    valid = false;
-                    break;
-                }
-                let peak = band(k - 1, k + 2);
-                let side = (band(k - 9, k - 5) + band(k + 6, k + 10)) * (3.0 / 8.0);
-                contrasts[ci] = (10.0 * ((peak + 1e-12) / (side + 1e-12)).log10()) as f32;
-            }
-            if !valid {
-                continue;
-            }
-            // 2nd-weakest harmonic (partial fold, no full sort).
-            let (_, score) = contrasts
-                .iter()
-                .fold((f32::INFINITY, f32::INFINITY), |(a, b), &c| {
-                    if c < a {
-                        (c, a)
-                    } else if c < b {
-                        (a, c)
-                    } else {
-                        (a, b)
-                    }
-                });
-            if score > best {
+            if let Some(score) = contrast_score(&csum, n_bins, f0, bin_hz)
+                && score > best
+            {
                 best = score;
                 best_f = f0;
             }
@@ -201,14 +213,42 @@ pub fn detect_tonal_events(samples: &[f32], sample_rate: u32, window: usize) -> 
         .iter()
         .zip(&levels)
         .filter(|&(_, &lv)| lv - median >= LEVEL_FLOOR_DB)
-        .map(|(&i, &lv)| TonalEvent {
-            time: frame_t(i),
-            f0_hz: f0s[(i + 3).min(n - 1)], // f0 read post-attack
-            contrast_db: scores[i],
-            sustain_db: sustain_of(i),
-            level_db_rel: lv - median,
+        .map(|(&i, &lv)| {
+            let read = (i + 3).min(n - 1); // f0 read post-attack
+            let f0 = octave_preference(&mags[read], f0s[read], bin_hz);
+            TonalEvent {
+                time: frame_t(i),
+                f0_hz: f0,
+                contrast_db: scores[i],
+                sustain_db: sustain_of(i),
+                level_db_rel: lv - median,
+            }
         })
         .collect()
+}
+
+/// Subharmonic correction: when a tone's upper partials are attenuated,
+/// the f0/2 candidate can win the per-frame argmax (its harmonics 2–5 land
+/// on the surviving partials). If the octave-up candidate explains the
+/// spectrum nearly as well (within tolerance), prefer it. One octave only.
+/// Measured necessity: the BUCKED hook reads 452 Hz instead of 916 Hz in
+/// the mellower mid sections without this.
+const OCTAVE_TOLERANCE_DB: f32 = 2.0;
+
+fn octave_preference(mags: &[f32], f0: f32, bin_hz: f32) -> f32 {
+    let f0_up = f0 * 2.0;
+    if f0_up > F0_MAX_HZ {
+        return f0;
+    }
+    let csum = frame_cumsum(mags);
+    let n_bins = mags.len() as isize;
+    match (
+        contrast_score(&csum, n_bins, f0, bin_hz),
+        contrast_score(&csum, n_bins, f0_up, bin_hz),
+    ) {
+        (Some(low), Some(high)) if high >= low - OCTAVE_TOLERANCE_DB => f0_up,
+        _ => f0,
+    }
 }
 
 #[cfg(test)]
@@ -291,6 +331,60 @@ mod tests {
         assert!(
             flux_found < found,
             "flux should under-detect beeps (flux={flux_found}, tonal={found})"
+        );
+    }
+
+    #[test]
+    fn octave_preference_prefers_higher_only_on_ambiguity() {
+        // (a) Unambiguous tone at 916 Hz with 4 partials: stays 916.
+        // (b) Dense stack (partials every ~458 Hz = ambiguous octave):
+        //     the f0/2 candidate scores within tolerance, so the event
+        //     must report the octave-up f0.
+        let mut samples = vec![0.0f32; SR as usize * 3];
+        // (a) 916 Hz with partials 2-5 only: 0.5-1.1s
+        let (a0, a1) = ((0.5 * SR as f64) as usize, (1.1 * SR as f64) as usize);
+        for (i, s) in samples.iter_mut().enumerate().take(a1).skip(a0) {
+            let t = i as f32 / SR as f32;
+            let mut v = 0.0f32;
+            for (h, a) in [
+                (1.0, 0.08),
+                (2.0, 0.30),
+                (3.0, 0.22),
+                (4.0, 0.16),
+                (5.0, 0.12),
+            ] {
+                v += a * (2.0 * std::f32::consts::PI * 916.0 * h * t).sin();
+            }
+            *s += v;
+        }
+        // (b) dense stack every 458 Hz from 916 to 4580: 1.5-2.1s
+        let (b0, b1) = ((1.5 * SR as f64) as usize, (2.1 * SR as f64) as usize);
+        for (i, s) in samples.iter_mut().enumerate().take(b1).skip(b0) {
+            let t = i as f32 / SR as f32;
+            let mut v = 0.0f32;
+            for k in 2..=10 {
+                v += 0.14 * (2.0 * std::f32::consts::PI * 458.0 * k as f32 * t).sin();
+            }
+            *s += v;
+        }
+        let events = detect_tonal_events(&samples, SR, 1024);
+        let a = events
+            .iter()
+            .find(|e| (e.time - 0.5).abs() < 0.2)
+            .expect("tone (a) detected");
+        assert!(
+            (a.f0_hz - 916.0).abs() < 24.0,
+            "unambiguous tone must stay: {}",
+            a.f0_hz
+        );
+        let b = events
+            .iter()
+            .find(|e| (e.time - 1.5).abs() < 0.2)
+            .expect("tone (b) detected");
+        assert!(
+            (b.f0_hz - 916.0).abs() < 24.0,
+            "ambiguous stack must correct to the octave-up: {}",
+            b.f0_hz
         );
     }
 

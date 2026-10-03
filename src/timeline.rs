@@ -60,10 +60,10 @@ pub struct Timeline {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bars: Option<Vec<Bar>>,
     /// Tonal (pitched) note onsets from harmonic-stack contrast — the lane
-    /// that sees synth hooks under drums. Flux `onsets` stay percussive;
-    /// these are complementary. Empty when none are detected.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tonal_events: Vec<TonalEvent>,
+    /// that sees synth hooks masked by drum energy. Flux `onsets` stay
+    /// percussive; these are complementary. Absent when none are detected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tonal_events: Option<TonalEvents>,
     /// Section boundaries from feature-contrast novelty. Detects THAT a
     /// transition happens, not WHAT the section is — no semantic labels.
     pub sections: Sections,
@@ -178,6 +178,14 @@ pub struct Section {
     /// first section (no preceding boundary).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transition_strength: Option<f32>,
+}
+
+/// Container for tonal events, with detector provenance (same shape as
+/// `beats`/`downbeats`/`sections`).
+#[derive(Debug, Clone, Serialize)]
+pub struct TonalEvents {
+    pub engine: &'static str,
+    pub items: Vec<TonalEvent>,
 }
 
 /// A tonal (pitched) event: a note-like onset with an estimated

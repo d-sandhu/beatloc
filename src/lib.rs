@@ -57,7 +57,7 @@ pub const STFT_HOP: usize = 441;
 
 /// Schema identity of the emitted JSON document.
 pub const SCHEMA_NAME: &str = "beatloc-timeline";
-pub const SCHEMA_VERSION: &str = "0.8.0";
+pub const SCHEMA_VERSION: &str = "0.9.0";
 
 /// File names of the ONNX model artifacts (regenerate with
 /// `scripts/export_model.py`; see models/manifest.json for provenance).
@@ -174,7 +174,15 @@ pub fn analyze_file_with_engine(
     // Tonal events (harmonic-stack contrast on its own fine grid — see
     // dsp::tonal docs; engine-independent). Catches pitched note onsets
     // that flux misses.
-    let tonal_events = dsp::tonal::detect_tonal_events(&mono, ANALYSIS_SAMPLE_RATE, STFT_WINDOW);
+    let tonal_items = dsp::tonal::detect_tonal_events(&mono, ANALYSIS_SAMPLE_RATE, STFT_WINDOW);
+    let tonal_events = if tonal_items.is_empty() {
+        None
+    } else {
+        Some(timeline::TonalEvents {
+            engine: dsp::tonal::ENGINE,
+            items: tonal_items,
+        })
+    };
     let mut section_items = Vec::with_capacity(transitions.len() + 1);
     let mut start = 0.0f64;
     for (i, t) in transitions.iter().enumerate() {
