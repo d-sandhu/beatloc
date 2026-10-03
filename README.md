@@ -159,8 +159,14 @@ the model is uncertain.
 Honest limitations: the neural engine inherits Beat This!'s training-data
 biases (Western 4/4-heavy); it can still lock offbeat on unusual textures,
 and it does not report a time signature — only beat positions within
-detected bars. Onset detection is a spectral-flux heuristic. The DSP engine
-assumes one global tempo and exists as a fallback/baseline, not the product.
+detected bars. **Meter changes break bars, not beats:** on music that
+alternates meters (measured on a 5/4↔4/4 track), downbeat placement becomes
+erratic and `bar`/`bar_position` unreliable while beat times stay accurate.
+Onset detection uses a track-global adaptive threshold: on extreme
+dynamic-range material (e.g. a long quiet intro before a loud climax),
+quiet-passage onsets are *absent* rather than noisy — by design, but know
+it before cutting a quiet scene to onsets. The DSP engine assumes one
+global tempo and exists as a fallback/baseline, not the product.
 
 ### Sections accuracy (RWC-P, 100 tracks, AIST structure annotations)
 
