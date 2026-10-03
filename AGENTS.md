@@ -36,5 +36,8 @@ all decisions, measured results, licenses, and risks. Then `README.md` and
 - Never commit `datasets/`, `models/`, `notes/`, `.venv/`, or any
   non-synthetic audio. Test fixtures must be synthesized by our own code.
 - Git mutations (commit/push/…) only when the user explicitly asks.
+- CPU-saturating jobs (batch evals, corpus-scale analysis, long downloads)
+  are announced first with a duration estimate and run only with the
+  owner's go-ahead; offer `nice`/thread-capped alternatives.
 - No plugin frameworks, no custom model training, no features without a
   measurement story. Small, tested, reviewable changes.
